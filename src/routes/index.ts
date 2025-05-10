@@ -1,11 +1,13 @@
-import { Router } from "express";
-import userTestRouter from "./UserTestRoutes";
-import authRouter from "./AuthRoutes";
+import { Router } from 'express';
+import authRoutes from './AuthRoutes';
+import userTestRoutes from './UserTestRoutes';
+import visionRoutes from './VisionRoutes'; // Nova importação
 
-const router = Router();  
+const router = Router();
 
-router.use('/userTest', userTestRouter,);
-router.use('/auth', authRouter);
+router.use('/auth', authRoutes);
+router.use('/user-test', userTestRoutes);
+router.use('/vision', visionRoutes); // Nova rota
 router.route('/').get((_, res) => {
   res.status(200).send('The server is running');
 });
