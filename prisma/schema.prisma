@@ -8,7 +8,7 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-model User {
+model UserTest {
   id        String   @id @default(cuid())
   name      String?
   email     String?  @unique
