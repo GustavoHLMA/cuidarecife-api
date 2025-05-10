@@ -66,14 +66,14 @@ Gustavo Henrique Lima Mendes de Almeida<br/>
 - [Vídeo de Demo](https://youtube.com/demo/cuida-recife)
 
 ## Instalação ⬇️
-
+- Copie e cole o .env.example, remova o .example e coloque e preencha o que for necessário (link de conexão com bd e chaves de api)
 ```bash
 - npm install
 ```
 
 ## Rodando o projeto 🏃
 ```bash
-- npx expo start
+- npx run dev
 ```
 
 ## Como contribuir 🤝
@@ -93,7 +93,7 @@ Exemplo:
 `feature(navbar-mobile): adicionando navegação`
 
 ### Branch padrão
-- develop
+- main
 
 ### Pull requests
 Pull requests devem ter uma boa e clara descrição.\
