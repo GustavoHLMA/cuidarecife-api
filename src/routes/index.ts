@@ -1,13 +1,15 @@
 import { Router } from 'express';
 import authRoutes from './AuthRoutes';
 import userTestRoutes from './UserTestRoutes';
-import visionRoutes from './VisionRoutes'; // Nova importação
+import visionRoutes from './VisionRoutes';
+import chatRoutes from './ChatRoutes';
 
 const router = Router();
 
 router.use('/auth', authRoutes);
 router.use('/user-test', userTestRoutes);
-router.use('/vision', visionRoutes); // Nova rota
+router.use('/vision', visionRoutes);
+router.use('/chat', chatRoutes);
 router.route('/').get((_, res) => {
   res.status(200).send('The server is running');
 });
