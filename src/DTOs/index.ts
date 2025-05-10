@@ -1,3 +1,2 @@
-import { UserTest, UpdateUserTest } from "./UserTest";
-
-export { UserTest, UpdateUserTest };
+export * from './UserTest';
+export * from './PrescriptionVerification'; // NOVO

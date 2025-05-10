@@ -1,13 +1,15 @@
 import { Router } from 'express';
-import userTestRoutes from './UserTestRoutes';
-import visionRoutes from './VisionRoutes';
-import chatRoutes from './ChatRoutes';
+import UserTestRoutes from './UserTestRoutes';
+import VisionRoutes from './VisionRoutes';
+import ChatRoutes from './ChatRoutes';
+import PrescriptionRoutes from './PrescriptionRoutes'; // NOVO
 
 const router = Router();
 
-router.use('/user-test', userTestRoutes);
-router.use('/vision', visionRoutes);
-router.use('/chat', chatRoutes);
+router.use('/user-test', UserTestRoutes);
+router.use('/vision', VisionRoutes);
+router.use('/chat', ChatRoutes);
+router.use('/prescription', PrescriptionRoutes); // NOVO
 router.route('/').get((_, res) => {
   res.status(200).send('The server is running');
 });

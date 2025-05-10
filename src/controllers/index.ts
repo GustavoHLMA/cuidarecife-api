@@ -1,6 +1,11 @@
-import UserTestController from "./UserTestController";
-
+import UserTestController from './UserTestController';
+import {ChatController} from './ChatController'; // Assumindo export default
+import {VisionController} from './VisionController'; // Assumindo export default
+import PrescriptionController from './PrescriptionController';
 
 export {
-  UserTestController,
-}
+    UserTestController,
+    ChatController,
+    VisionController,
+    PrescriptionController,
+};
