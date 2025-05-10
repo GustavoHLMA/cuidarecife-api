@@ -1,12 +1,10 @@
 import { Router } from 'express';
-import authRoutes from './AuthRoutes';
 import userTestRoutes from './UserTestRoutes';
 import visionRoutes from './VisionRoutes';
 import chatRoutes from './ChatRoutes';
 
 const router = Router();
 
-router.use('/auth', authRoutes);
 router.use('/user-test', userTestRoutes);
 router.use('/vision', visionRoutes);
 router.use('/chat', chatRoutes);
