@@ -8,11 +8,70 @@ datasource db {
   directUrl = env("DIRECT_URL")
 }
 
-model UserTest {
-  id        String   @id @default(cuid())
-  name      String?
-  email     String?  @unique
-  password  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+model User {
+  id                    String                 @id @default(cuid())
+  name                  String
+  email                 String                 @unique
+  password              String
+  refreshToken          String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  glucoseReadings       GlucoseReading[]
+  bloodPressureReadings BloodPressureReading[]
+  prescriptions         Prescription[]
+}
+
+model GlucoseReading {
+  id          String   @id @default(cuid())
+  value       Int // mg/dL
+  measuredAt  DateTime
+  mealContext String? // "before" | "after" | null
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model BloodPressureReading {
+  id         String   @id @default(cuid())
+  systolic   Int // pressão sistólica (alta)
+  diastolic  Int // pressão diastólica (baixa)
+  measuredAt DateTime
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  createdAt  DateTime @default(now())
+}
+
+model Prescription {
+  id           String       @id @default(cuid())
+  patientName  String?
+  returnInDays Int?
+  userId       String
+  user         User         @relation(fields: [userId], references: [id])
+  medications  Medication[]
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+}
+
+model Medication {
+  id             String       @id @default(cuid())
+  name           String
+  dosage         String? // Ex: "50mg", "500mg"
+  instructions   String // Ex: "Tomar após café da manhã"
+  timesPerDay    Int          @default(1) // Quantas vezes ao dia
+  times          String? // JSON array de horários: '["08:00", "20:00"]'
+  isFree         Boolean      @default(true)
+  prescriptionId String
+  prescription   Prescription @relation(fields: [prescriptionId], references: [id], onDelete: Cascade)
+  doseLogs       DoseLog[]
+  createdAt      DateTime     @default(now())
+}
+
+model DoseLog {
+  id            String     @id @default(cuid())
+  medicationId  String
+  medication    Medication @relation(fields: [medicationId], references: [id], onDelete: Cascade)
+  scheduledTime String? // Horário planejado: "08:00"
+  status        String     @default("taken") // "taken" ou "forgotten"
+  takenAt       DateTime // Quando realmente tomou/registrou
+  createdAt     DateTime   @default(now())
 }
