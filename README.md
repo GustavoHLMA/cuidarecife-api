@@ -34,16 +34,13 @@
 
 ## Tech Stack ⚙️
 
-![React Native](https://img.shields.io/badge/React%20Native-20232A?style=for-the-badge&logo=react&logoColor=61DAFB) 
-![Expo](https://img.shields.io/badge/Expo-1C1E24?style=for-the-badge&logo=expo&logoColor=white) 
-![JavaScript](https://img.shields.io/badge/JavaScript-323330?style=for-the-badge&logo=javascript&logoColor=F7DF1E) 
-![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white) 
 ![Node.js](https://img.shields.io/badge/Node.js-339933?style=for-the-badge&logo=nodedotjs&logoColor=white) 
+![TypeScript](https://img.shields.io/badge/TypeScript-007ACC?style=for-the-badge&logo=typescript&logoColor=white) 
 ![Express](https://img.shields.io/badge/Express-000000?style=for-the-badge&logo=express&logoColor=white) 
 ![Prisma](https://img.shields.io/badge/Prisma-2D3748?style=for-the-badge&logo=prisma&logoColor=white) 
-![ChatGPT](https://img.shields.io/badge/ChatGPT-4E9BFF?style=for-the-badge&logo=openai&logoColor=white) 
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-336791?style=for-the-badge&logo=postgresql&logoColor=white)
+![Gemini](https://img.shields.io/badge/Gemini-4285F4?style=for-the-badge&logo=google&logoColor=white)
 ![Cloud Vision API](https://img.shields.io/badge/Cloud%20Vision%20API-4285F4?style=for-the-badge&logo=google-cloud&logoColor=white)
-
 
 ## Equipe 🏆
 
@@ -52,53 +49,94 @@
 🖋️ Behance: [behance.net/gabygraciano](https://www.behance.net/gabygraciano)  
 🌐 GitHub: [github.com/gabygraciano](https://github.com/gabygraciano)
 
-Gustavo Henrique Lima Mendes de Almeida<br/>
-📧 E-mail: gustavohlma8@gmail.com<br/>
+**Gustavo Henrique Lima Mendes de Almeida**  
+📧 E-mail: gustavohlma8@gmail.com  
 🌐 GitHub: [github.com/GustavoHLMA](https://github.com/GustavoHLMA)
 
 **Manuelle Graciano Ferreira**
 - 🩺 Médica formada pela ***Universidade de Pernambuco***
 
-  ## Documentação 📄
+## Documentação 📄
 
 - [Figma](https://www.figma.com/design/Ey3L81KZqbQ5rCkeKNERm6/Hacker-cidad%C3%A3o-13?node-id=1-2&t=Txk0XatsX8RCfwUZ-1)
 - [Pitch](https://docs.google.com/presentation/d/17AeBh5xvDqSzQEvCWxJrsqBund2Ve4HAdA_-4IjzvaQ/edit?usp=sharing)
 - [Vídeo de Demo](https://youtube.com/demo/cuida-recife)
 
 ## Instalação ⬇️
-- Copie e cole o .env.example, remova o .example e coloque e preencha o que for necessário (link de conexão com bd e chaves de api)
+
+### 1. Clone o repositório
 ```bash
-- npm install
+git clone https://github.com/GustavoHLMA/cuidarecife-api.git
+cd cuidarecife-api
+```
+
+### 2. Instale as dependências
+```bash
+npm install
+```
+
+### 3. Configure as variáveis de ambiente
+Copie o arquivo `.env.example` para `.env`:
+```bash
+cp .env.example .env
+```
+
+Preencha as variáveis obrigatórias:
+```env
+# Banco de dados PostgreSQL (obrigatório)
+DATABASE_URL="postgresql://user:password@host:5432/database?connection_limit=10&pool_timeout=20"
+DIRECT_URL="postgresql://user:password@host:5432/database"
+
+# JWT Secrets (obrigatório)
+JWT_ACCESS_SECRET=your_secret_key_here
+JWT_REFRESH_SECRET=your_refresh_secret_key_here
+
+# APIs de IA (obrigatório)
+GEMINI_API_KEY=your_gemini_api_key
+GOOGLE_VISION_API_KEY=your_google_vision_api_key
+```
+
+### 4. Execute as migrações do banco
+```bash
+npx prisma migrate dev
+npx prisma generate
 ```
 
 ## Rodando o projeto 🏃
+
+### Desenvolvimento
 ```bash
-- npx run dev
+npm run dev
+```
+
+### Build para produção
+```bash
+npm run build
+npm start
+```
+## Deploy 🚀
+
+O projeto está configurado para deploy no [Render](https://render.com):
+
+**Build Command:**
+```bash
+npm install && npx prisma generate && npm run build
+```
+
+**Start Command:**
+```bash
+npm start
 ```
 
 ## Como contribuir 🤝
-### Branches
-Pull requests devem ser compostos pelo tipo e nome da branch.\
-os nomes das branchs devem ser separados por "-".\
-os tipo são compostos por:
-- feature - Para novas funcionalidades
-- fix - Para bugfixes e hotfixes
-
-Exemplo: 
-`feature/navbar-mobile`
 
 ### Commits
-Commits devem ser estruturados da seguinte forma <tipo>(<nome-da-branch>): <descrição do commit>\
-Exemplo: 
-`feature(navbar-mobile): adicionando navegação`
+Commits devem seguir o padrão:
+- `feat(nome da branch): descrição da funcionalidade` - Para novas funcionalidades
+- `hotfix(nome da branch): descrição do bug` - Para bugfixes em main
+- `chore(nome da branch): descroção da tarefa` - Para alterações referentes builds/deploy/serviços externos etc. 
 
-### Branch padrão
-- main
-
-### Pull requests
-Pull requests devem ter uma boa e clara descrição.\
-Os 3 principais tópicos da descrição devem ser:
-`- What I did`
-`- How to test`
-
-
+```
+feature(medications): adicionar tela de histórico
+fix(auth): corrigir validação de email
+```
