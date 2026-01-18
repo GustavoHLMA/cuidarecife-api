@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { userRepository } from '../repositories/authRepository';
+import { authRepository } from '../repositories/authRepository';
 import { z } from 'zod';
 
 const registerSchema = z.object({
@@ -35,12 +35,12 @@ export class AuthController {
     try {
       const validatedData = registerSchema.parse(req.body);
 
-      const existingUser = await userRepository.findByEmail(validatedData.email);
+      const existingUser = await authRepository.findByEmail(validatedData.email);
       if (existingUser) {
         return res.status(400).json({ error: 'Email already registered' });
       }
 
-      const user = await userRepository.create(validatedData);
+      const user = await authRepository.create(validatedData);
 
       return res.status(201).json({
         message: 'User created successfully',
@@ -59,12 +59,12 @@ export class AuthController {
     try {
       const validatedData = loginSchema.parse(req.body);
 
-      const user = await userRepository.findByEmail(validatedData.email);
+      const user = await authRepository.findByEmail(validatedData.email);
       if (!user) {
         return res.status(401).json({ error: 'Invalid email or password' });
       }
 
-      const isValidPassword = await userRepository.validatePassword(
+      const isValidPassword = await authRepository.validatePassword(
         validatedData.password,
         user.password
       );
@@ -75,7 +75,7 @@ export class AuthController {
       const accessToken = this.generateAccessToken(user.id, user.email);
       const refreshToken = this.generateRefreshToken(user.id, user.email);
 
-      await userRepository.updateRefreshToken(user.id, refreshToken);
+      await authRepository.updateRefreshToken(user.id, refreshToken);
 
       return res.json({
         accessToken,
@@ -113,7 +113,7 @@ export class AuthController {
         return res.status(401).json({ error: 'Invalid refresh token' });
       }
 
-      const user = await userRepository.findById(decoded.userId);
+      const user = await authRepository.findById(decoded.userId);
       if (!user || user.refreshToken !== refreshToken) {
         return res.status(401).json({ error: 'Invalid refresh token' });
       }
@@ -121,7 +121,7 @@ export class AuthController {
       const newAccessToken = this.generateAccessToken(user.id, user.email);
       const newRefreshToken = this.generateRefreshToken(user.id, user.email);
 
-      await userRepository.updateRefreshToken(user.id, newRefreshToken);
+      await authRepository.updateRefreshToken(user.id, newRefreshToken);
 
       return res.json({
         accessToken: newAccessToken,
@@ -144,7 +144,7 @@ export class AuthController {
             refreshToken,
             process.env.JWT_REFRESH_SECRET as string
           ) as { userId: string };
-          await userRepository.updateRefreshToken(decoded.userId, null);
+          await authRepository.updateRefreshToken(decoded.userId, null);
         } catch {
           // Token already invalid, proceed with logout
         }

@@ -7,7 +7,7 @@ export interface CreateUserData {
   password: string;
 }
 
-export const userRepository = {
+export const authRepository = {
   async create(data: CreateUserData) {
     const hashedPassword = await bcrypt.hash(data.password, 10);
 

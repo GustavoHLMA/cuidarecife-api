@@ -1,2 +1,1 @@
-export * from './UserTest';
-export * from './PrescriptionVerification'; // NOVO
+export * from './PrescriptionVerification';

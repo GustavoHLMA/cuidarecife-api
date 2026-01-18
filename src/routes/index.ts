@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import UserTestRoutes from './UserTestRoutes';
 import VisionRoutes from './VisionRoutes';
 import ChatRoutes from './ChatRoutes';
 import PrescriptionRoutes from './PrescriptionRoutes';
@@ -17,7 +16,6 @@ router.route('/').get((_, res) => {
 });
 
 // Protected routes (require JWT)
-router.use('/user-test', authMiddleware, UserTestRoutes);
 router.use('/vision', authMiddleware, VisionRoutes);
 router.use('/chat', authMiddleware, ChatRoutes);
 router.use('/prescription', authMiddleware, PrescriptionRoutes);

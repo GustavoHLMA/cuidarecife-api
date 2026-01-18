@@ -1,7 +1,5 @@
-import UserTestRepository from "./userTestRepository";
-
-
+import { authRepository } from './authRepository';
 
 export {
-  UserTestRepository,
-}
+  authRepository,
+};
