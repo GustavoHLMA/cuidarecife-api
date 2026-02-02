@@ -13,6 +13,7 @@ model User {
   name                  String
   email                 String                 @unique
   password              String
+  neighborhood          String? // Bairro do usuário para filtrar farmácias próximas
   refreshToken          String?
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
@@ -74,4 +75,19 @@ model DoseLog {
   status        String     @default("taken") // "taken" ou "forgotten"
   takenAt       DateTime // Quando realmente tomou/registrou
   createdAt     DateTime   @default(now())
+}
+
+model Pharmacy {
+  id           String   @id @default(cuid())
+  cnpj         String   @unique
+  name         String // Nome fantasia ou razão social
+  street       String
+  number       String?
+  complement   String?
+  neighborhood String
+  cep          String?
+  phone        String?
+  latitude     Float? // Coordenada para cálculo de distância
+  longitude    Float? // Coordenada para cálculo de distância
+  createdAt    DateTime @default(now())
 }

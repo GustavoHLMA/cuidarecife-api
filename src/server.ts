@@ -5,7 +5,7 @@ import app from './app';
 import prisma from './db';
 
 const PORT = process.env.PORT || 3001;
-const HOST = '0.0.0.0'; // Allow connections from any network interface
+const HOST = '0.0.0.0';
 
 const server = app.listen(Number(PORT), HOST, () => {
   console.log(`Server is running on http://${HOST}:${PORT}`);

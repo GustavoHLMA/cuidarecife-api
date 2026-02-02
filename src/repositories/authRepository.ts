@@ -5,6 +5,7 @@ export interface CreateUserData {
   name: string;
   email: string;
   password: string;
+  neighborhood?: string;
 }
 
 export const authRepository = {
@@ -16,6 +17,7 @@ export const authRepository = {
         name: data.name,
         email: data.email,
         password: hashedPassword,
+        neighborhood: data.neighborhood,
       },
     });
   },

@@ -5,12 +5,14 @@ import PrescriptionRoutes from './PrescriptionRoutes';
 import AuthRoutes from './AuthRoutes';
 import HealthRoutes from './HealthRoutes';
 import MedicationRoutes from './MedicationRoutes';
+import PharmacyRoutes from './PharmacyRoutes';
 import { authMiddleware } from '../middlewares/authMiddleware';
 
 const router = Router();
 
 // Public routes
 router.use('/auth', AuthRoutes);
+router.use('/pharmacies', PharmacyRoutes);
 router.route('/').get((_, res) => {
   res.status(200).send('The server is running');
 });
