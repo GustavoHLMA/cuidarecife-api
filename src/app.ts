@@ -1,8 +1,15 @@
 import express from 'express';
+import cors from 'cors';
 import * as Sentry from '@sentry/node';
 import router from './routes';
 
 const app = express();
+
+// CORS para permitir requests do frontend (web e mobile)
+app.use(cors({
+  origin: true, // Permite qualquer origem em desenvolvimento
+  credentials: true,
+}));
 
 app.use(express.json({ limit: '50mb' }));
 app.use(router);

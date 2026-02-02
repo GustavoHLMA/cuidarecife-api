@@ -160,44 +160,75 @@ export const MedicationController = {
 
         const dosesTakenToday = todayLogs.filter(log => log.status === 'taken').length;
 
-        // Calcular histórico semanal (7 dias desde prescrição)
-        const weekHistory: Array<{ day: number; status: 'taken' | 'forgotten' | 'pending' | 'future' }> = [];
+        // Calcular histórico semanal CÍCLICO com dados proporcionais
+        const weekHistory: Array<{
+          day: number;
+          taken: number;
+          required: number;
+          percentage: number;
+          status: 'complete' | 'partial' | 'missed' | 'pending' | 'future';
+        }> = [];
+
+        // Quantos dias desde a prescrição
+        const daysSincePrescription = Math.floor((today.getTime() - prescriptionDate.getTime()) / (1000 * 60 * 60 * 24));
+
+        // Qual semana atual (0 = primeira semana, 1 = segunda, etc)
+        const currentWeek = Math.floor(daysSincePrescription / 7);
+
+        // Data de início da semana atual
+        const weekStartDate = new Date(prescriptionDate);
+        weekStartDate.setDate(prescriptionDate.getDate() + (currentWeek * 7));
+        weekStartDate.setHours(0, 0, 0, 0);
 
         for (let i = 0; i < 7; i++) {
-          const dayDate = new Date(prescriptionDate);
-          dayDate.setDate(prescriptionDate.getDate() + i);
+          const dayDate = new Date(weekStartDate);
+          dayDate.setDate(weekStartDate.getDate() + i);
           dayDate.setHours(0, 0, 0, 0);
 
           const dayEnd = new Date(dayDate);
           dayEnd.setHours(23, 59, 59, 999);
 
-          // Se o dia está no futuro ou antes da prescrição
+          // Se o dia está no futuro
           if (dayDate > today) {
-            weekHistory.push({ day: i + 1, status: 'future' });
+            weekHistory.push({
+              day: i + 1,
+              taken: 0,
+              required: dosesRequired,
+              percentage: 0,
+              status: 'future'
+            });
             continue;
           }
 
-          // Buscar logs desse dia
+          // Buscar logs desse dia específico
           const dayLogs = med.doseLogs.filter(log => {
             const logDate = new Date(log.takenAt);
             return logDate >= dayDate && logDate <= dayEnd;
           });
 
-          // Determinar status do dia
+          // Contar doses tomadas e esquecidas
           const takenCount = dayLogs.filter(log => log.status === 'taken').length;
-          const forgottenCount = dayLogs.filter(log => log.status === 'forgotten').length;
+          const percentage = Math.min(takenCount / dosesRequired, 1); // Max 100%
 
-          let dayStatus: 'taken' | 'forgotten' | 'pending';
+          // Determinar status
+          let dayStatus: 'complete' | 'partial' | 'missed' | 'pending';
           if (takenCount >= dosesRequired) {
-            dayStatus = 'taken';
-          } else if (forgottenCount > 0 || (dayDate < today && takenCount < dosesRequired)) {
-            // Se esqueceu algum ou se é dia passado e não completou
-            dayStatus = dayDate < today ? 'forgotten' : 'pending';
+            dayStatus = 'complete';
+          } else if (takenCount > 0) {
+            dayStatus = 'partial';
+          } else if (dayDate < today) {
+            dayStatus = 'missed';
           } else {
             dayStatus = 'pending';
           }
 
-          weekHistory.push({ day: i + 1, status: dayStatus });
+          weekHistory.push({
+            day: i + 1,
+            taken: takenCount,
+            required: dosesRequired,
+            percentage,
+            status: dayStatus
+          });
         }
 
         return {
@@ -259,6 +290,7 @@ export const MedicationController = {
         data: {
           medicationId,
           scheduledTime: scheduledTime || null,
+          status: 'taken',
           takenAt: takenAt ? new Date(takenAt) : new Date(),
         },
       });
