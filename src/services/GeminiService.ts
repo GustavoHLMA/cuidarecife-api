@@ -43,7 +43,7 @@ interface GeminiResponse {
 // ===== CONFIGURAÇÕES PADRÃO =====
 const DEFAULT_GENERATION_CONFIG: GeminiGenerationConfig = {
   temperature: 0.7,
-  maxOutputTokens: 500,
+  maxOutputTokens: 800,
   topP: 0.95,
   topK: 40,
 };

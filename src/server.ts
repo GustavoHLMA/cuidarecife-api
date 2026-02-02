@@ -1,10 +1,15 @@
+import './instrument';
+import * as Sentry from '@sentry/node';
+
 import app from './app';
 import prisma from './db';
 
 const PORT = process.env.PORT || 3001;
+const HOST = '0.0.0.0'; // Allow connections from any network interface
 
-const server = app.listen(PORT, () => {
-  console.log(`Server is running on http://localhost:${PORT}`);
+const server = app.listen(Number(PORT), HOST, () => {
+  console.log(`Server is running on http://${HOST}:${PORT}`);
+  console.log('[Sentry] Error tracking initialized');
 });
 
 // Graceful shutdown
