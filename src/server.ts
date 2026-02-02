@@ -1,15 +1,27 @@
 import './instrument';
 import * as Sentry from '@sentry/node';
+import * as path from 'path';
 
 import app from './app';
 import prisma from './db';
+import { ragService } from './services';
 
 const PORT = process.env.PORT || 3001;
 const HOST = '0.0.0.0';
 
-const server = app.listen(Number(PORT), HOST, () => {
+const server = app.listen(Number(PORT), HOST, async () => {
   console.log(`Server is running on http://${HOST}:${PORT}`);
   console.log('[Sentry] Error tracking initialized');
+
+  // Inicializa o RAG com os protocolos de saúde
+  try {
+    const docsPath = path.resolve(__dirname, '..', 'docs');
+    console.log('[RAG] Iniciando indexação de protocolos...');
+    const result = await ragService.indexFolder(docsPath);
+    console.log(`[RAG] Indexação completa: ${result.indexed} arquivos, ${ragService.getStatus().documentCount} chunks`);
+  } catch (error) {
+    console.warn('[RAG] Falha ao indexar protocolos (não crítico):', error);
+  }
 });
 
 // Graceful shutdown

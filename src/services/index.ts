@@ -5,3 +5,4 @@ export type { GeminiMessage, GeminiGenerationConfig, GeminiRequestOptions, Gemin
 export { visionService } from './VisionService';
 export type { VisionResult } from './VisionService';
 
+export { ragService } from './RAGService';

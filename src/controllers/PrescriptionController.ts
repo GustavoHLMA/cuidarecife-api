@@ -1,13 +1,29 @@
 import { Request, Response, NextFunction } from 'express';
-import { geminiService } from '../services';
+import { geminiService, ragService } from '../services';
 import { PrescriptionVerificationRequestSchema, PrescriptionVerificationRequest } from '../DTOs';
 
-const PRESCRIPTION_ANALYSIS_PROMPT = `Você é um assistente farmacêutico virtual útil e EXTREMAMENTE conciso. 
-Analise prescrições médicas de forma objetiva e direta.
-Suas respostas devem ter NO MÁXIMO 150 palavras.
-Não forneça conselhos médicos definitivos, apenas uma análise preliminar.
-Se não tiver certeza, indique isso.
-Responda apenas em português brasileiro.`;
+const PRESCRIPTION_ANALYSIS_PROMPT = `Você é um assistente farmacêutico que ajuda pacientes a entender suas receitas médicas.
+
+SEU PÚBLICO: Pessoas idosas e com baixa escolaridade.
+
+COMO ANALISAR:
+1. Verifique se há INTERAÇÕES PERIGOSAS entre os medicamentos
+2. Verifique se os HORÁRIOS fazem sentido
+3. Dê ALERTAS importantes sobre cada medicamento
+4. Fale de forma SIMPLES e DIRETA
+
+INTERAÇÕES IMPORTANTES A VERIFICAR:
+- Metformina + Álcool = Problema grave
+- Anti-hipertensivos + Anti-inflamatórios = Reduz efeito
+- Insulina + Sulfonilureias = Risco de hipoglicemia
+- AAS + Anticoagulantes = Risco de sangramento
+
+FORMATO DA RESPOSTA:
+1. Uma frase resumindo se a receita parece OK ou tem problemas
+2. Se houver interação perigosa, AVISE CLARAMENTE
+3. Dica prática sobre como tomar os remédios
+
+Seja BREVE - máximo 100 palavras.`;
 
 // Export como objeto para evitar problemas de binding
 export const PrescriptionController = {
@@ -22,34 +38,41 @@ export const PrescriptionController = {
         return res.status(500).json({ error: 'Serviço de IA não configurado corretamente.' });
       }
 
-      let userPrompt = "Analise esta prescrição de forma BREVE:\n";
-      if (prescriptionData.patientName) {
-        userPrompt += `Paciente: ${prescriptionData.patientName}\n`;
-      }
-      if (prescriptionData.returnInDays) {
-        userPrompt += `Retorno: ${prescriptionData.returnInDays} dias\n`;
-      }
-      userPrompt += "Medicamentos:\n";
-      prescriptionData.medications.forEach(med => {
-        userPrompt += `- ${med.name}: ${med.instructions}\n`;
-      });
+      // Monta a lista de medicamentos
+      let medicationList = prescriptionData.medications
+        .map(med => `- ${med.name}: ${med.instructions}`)
+        .join('\n');
 
-      userPrompt += "\nAnálise solicitada:";
-      userPrompt += "\n1. Os medicamentos parecem estar em doses geralmente aceitáveis para um adulto?";
-      userPrompt += "\n2. Existem interações medicamentosas óbvias e perigosas entre eles?";
-      userPrompt += "\n3. Os horários e instruções de como tomar parecem corretos e seguros?";
-      userPrompt += "\n4. Há alguma recomendação crítica ou alerta óbvio sobre esta prescrição?";
-      userPrompt += "\n5. No geral, a prescrição parece estar em ordem ou levanta alguma preocupação significativa?";
-      userPrompt += "\nResponda apenas com um resumo final conciso da sua análise em uma frase.";
+      let userPrompt = `RECEITA PARA ANÁLISE:
+${prescriptionData.patientName ? `Paciente: ${prescriptionData.patientName}` : ''}
+${prescriptionData.returnInDays ? `Retorno: ${prescriptionData.returnInDays} dias` : ''}
+
+Medicamentos:
+${medicationList}
+
+Analise esta receita de forma SIMPLES e verifique interações.`;
+
+      // Busca contexto do RAG se disponível
+      let systemPrompt = PRESCRIPTION_ANALYSIS_PROMPT;
+      const ragStatus = ragService.getStatus();
+      if (ragStatus.documentCount > 0) {
+        const context = await ragService.getContext(
+          prescriptionData.medications.map(m => m.name).join(' ') + ' interação',
+          2
+        );
+        if (context) {
+          systemPrompt += `\n\nINFORMAÇÕES DOS PROTOCOLOS:\n${context}`;
+        }
+      }
 
       console.log('[Prescription] Enviando para Gemini...');
 
       const result = await geminiService.generateContent({
         userMessage: userPrompt,
-        systemPrompt: PRESCRIPTION_ANALYSIS_PROMPT,
+        systemPrompt,
         generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 350,
+          temperature: 0.3,
+          maxOutputTokens: 300,
         },
       });
 
