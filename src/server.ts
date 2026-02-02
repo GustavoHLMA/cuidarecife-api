@@ -15,7 +15,15 @@ const server = app.listen(Number(PORT), HOST, async () => {
 
   // Inicializa o RAG com os protocolos de saúde
   try {
-    const docsPath = path.resolve(__dirname, '..', 'docs');
+    // Tenta resolver o caminho dos docs considerando a estrutura compilada (dist/src) ou local (src)
+    let docsPath = path.resolve(__dirname, '..', '..', 'docs');
+
+    // Fallback para desenvolvimento local (se .. levat para raiz direto)
+    if (!require('fs').existsSync(docsPath)) {
+      docsPath = path.resolve(__dirname, '..', 'docs');
+    }
+
+    console.log(`[RAG] Buscando protocolos em: ${docsPath}`);
     console.log('[RAG] Iniciando indexação de protocolos...');
     const result = await ragService.indexFolder(docsPath);
     console.log(`[RAG] Indexação completa: ${result.indexed} arquivos, ${ragService.getStatus().documentCount} chunks`);
