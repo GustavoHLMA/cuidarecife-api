@@ -20,7 +20,6 @@
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^22.3.0",
     "@types/node-fetch": "^2.6.12",
-    "bcrypt": "^5.1.1",
     "bcryptjs": "^2.4.3",
     "chromadb": "^3.2.2",
     "cors": "^2.8.6",
@@ -37,7 +36,6 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/bcrypt": "^6.0.0",
     "@types/pdf-parse": "^1.1.5",
     "xlsx": "^0.18.5"
   }
