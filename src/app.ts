@@ -7,7 +7,14 @@ const app = express();
 
 // CORS para permitir requests do frontend (web e mobile)
 app.use(cors({
-  origin: true, // Permite qualquer origem em desenvolvimento
+  origin: [
+    'http://localhost:3000',
+    'http://localhost:8081',
+    'https://cuidarecife-estratificacao.vercel.app',
+    // Permite conexões locais de túneis se existirem
+    /https?:\/\/localhost:\d+/,
+    /https?:\/\/.*\.ngrok-free\.app/
+  ],
   credentials: true,
 }));
 
