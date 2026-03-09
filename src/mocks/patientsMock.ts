@@ -27,8 +27,16 @@ export interface PatientMock {
   lista_prescricao: string[];
 }
 
+// Helpers para gerar datas relativas
+const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+const today = () => new Date().toISOString();
+
 export const mockPatients: PatientMock[] = [
-  // 1. Alto Risco - Pressão Alta + DRC
+  // ==========================================
+  // ALTO RISCO (VERMELHO) — Diversos motivos
+  // ==========================================
+
+  // 1. Alto Risco - PA >= 180/110 (HAS Estágio 3) + DRC
   {
     id: "1",
     nome: "Maria Silva Santos",
@@ -38,18 +46,199 @@ export const mockPatients: PatientMock[] = [
     data_nascimento: "1957-03-15",
     endereco: "Rua das Flores, 123",
     microarea: "01",
-    cids: ["I10", "N18.9"],
+    cids: ["I10", "N18.9"], // HAS + DRC
     peso: 85,
     altura: 1.60,
     imc: 33.2,
     ultima_pa_sistolica: 185,
     ultima_pa_diastolica: 115,
     ultimo_hba1c: null,
-    data_ultima_consulta: "2025-05-10T00:00:00.000Z", // Há mais de 6 meses
+    data_ultima_consulta: "2025-05-10T00:00:00.000Z",
     data_ultima_visita_domiciliar: "2025-10-01T00:00:00.000Z",
     lista_prescricao: ["Losartana 50mg", "Hidroclorotiazida 25mg"]
   },
-  // 2. Médio Risco - HAS + DM controlado
+
+  // 2. Alto Risco - HbA1c > 9% (DM descompensado) + Obesidade
+  {
+    id: "4",
+    nome: "Ana Costa Pereira",
+    cpf: "444.444.444-44",
+    sexo: "F",
+    idade: 52,
+    data_nascimento: "1972-11-05",
+    endereco: "Rua da Paz, 77",
+    microarea: "02",
+    cids: ["E11.9", "E66.9"], // DM + Obesidade
+    peso: 105,
+    altura: 1.65,
+    imc: 38.6,
+    ultima_pa_sistolica: 135,
+    ultima_pa_diastolica: 80,
+    ultimo_hba1c: 10.2,
+    data_ultima_consulta: "2025-01-15T00:00:00.000Z",
+    data_ultima_visita_domiciliar: "2025-06-20T00:00:00.000Z",
+    lista_prescricao: ["Insulina NPH", "Metformina 850mg"]
+  },
+
+  // 3. Alto Risco - AVC prévio (I63) — Comorbidade de alto risco
+  {
+    id: "6",
+    nome: "Clodoaldo Mendes",
+    cpf: "666.666.666-66",
+    sexo: "M",
+    idade: 71,
+    data_nascimento: "1953-09-12",
+    endereco: "Av Caxangá, 1000",
+    microarea: "03",
+    cids: ["I10", "I63.9"], // HAS + AVC
+    peso: 82,
+    altura: 1.68,
+    imc: 29.1,
+    ultima_pa_sistolica: 155,
+    ultima_pa_diastolica: 95,
+    ultimo_hba1c: null,
+    data_ultima_consulta: "2025-03-10T00:00:00.000Z",
+    data_ultima_visita_domiciliar: "2025-05-15T00:00:00.000Z",
+    lista_prescricao: ["AAS 100mg", "Losartana 50mg", "Anlodipino 5mg"]
+  },
+
+  // 4. Alto Risco - Insuficiência Cardíaca (I50) + HAS
+  {
+    id: "7",
+    nome: "Severina Bezerra",
+    cpf: "777.777.777-77",
+    sexo: "F",
+    idade: 74,
+    data_nascimento: "1950-06-22",
+    endereco: "Rua do Porto, 45",
+    microarea: "01",
+    cids: ["I10", "I50.9"], // HAS + ICC
+    peso: 68,
+    altura: 1.55,
+    imc: 28.3,
+    ultima_pa_sistolica: 170,
+    ultima_pa_diastolica: 100,
+    ultimo_hba1c: null,
+    data_ultima_consulta: daysAgo(20),
+    data_ultima_visita_domiciliar: daysAgo(10),
+    lista_prescricao: ["Captopril 25mg", "Furosemida 40mg", "Carvedilol 6.25mg"]
+  },
+
+  // 5. Alto Risco - Retinopatia Diabética (H36.0) + DM
+  {
+    id: "8",
+    nome: "Roberto Lima Filho",
+    cpf: "888.888.888-88",
+    sexo: "M",
+    idade: 63,
+    data_nascimento: "1961-04-18",
+    endereco: "Travessa Boa Vista, 200",
+    microarea: "02",
+    cids: ["E11.9", "H36.0"], // DM + Retinopatia
+    peso: 78,
+    altura: 1.72,
+    imc: 26.4,
+    ultima_pa_sistolica: 140,
+    ultima_pa_diastolica: 88,
+    ultimo_hba1c: 8.5,
+    data_ultima_consulta: daysAgo(45),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Insulina Glargina", "Metformina 1000mg"]
+  },
+
+  // 6. Alto Risco - Nefropatia (N18) + DM + HAS
+  {
+    id: "9",
+    nome: "Antônio Ferreira da Silva",
+    cpf: "999.999.999-99",
+    sexo: "M",
+    idade: 69,
+    data_nascimento: "1955-12-01",
+    endereco: "Rua da Aurora, 310",
+    microarea: "03",
+    cids: ["I10", "E11.9", "N18.9"], // HAS + DM + DRC
+    peso: 92,
+    altura: 1.70,
+    imc: 31.8,
+    ultima_pa_sistolica: 160,
+    ultima_pa_diastolica: 95,
+    ultimo_hba1c: 9.5,
+    data_ultima_consulta: "2025-04-20T00:00:00.000Z",
+    data_ultima_visita_domiciliar: "2025-08-10T00:00:00.000Z",
+    lista_prescricao: ["Losartana 100mg", "Insulina NPH", "Sinvastatina 40mg"]
+  },
+
+  // 7. Alto Risco - Pé Diabético (E11.5) + DM
+  {
+    id: "10",
+    nome: "Francisca Souza Barros",
+    cpf: "101.010.101-01",
+    sexo: "F",
+    idade: 66,
+    data_nascimento: "1958-07-30",
+    endereco: "Rua Imperador, 88",
+    microarea: "01",
+    cids: ["E11.9", "E11.5"], // DM + Pé Diabético
+    peso: 95,
+    altura: 1.58,
+    imc: 38.1,
+    ultima_pa_sistolica: 130,
+    ultima_pa_diastolica: 82,
+    ultimo_hba1c: 8.8,
+    data_ultima_consulta: daysAgo(15),
+    data_ultima_visita_domiciliar: daysAgo(7),
+    lista_prescricao: ["Insulina NPH", "Cilostazol 50mg", "Metformina 850mg"]
+  },
+
+  // 8. Alto Risco - Neuropatia Diabética (G63.2) + DM
+  {
+    id: "11",
+    nome: "Luiz Carlos Teixeira",
+    cpf: "111.222.333-44",
+    sexo: "M",
+    idade: 72,
+    data_nascimento: "1952-10-14",
+    endereco: "Av Recife, 500",
+    microarea: "02",
+    cids: ["E10.9", "G63.2"], // DM Insulinodep + Neuropatia
+    peso: 70,
+    altura: 1.65,
+    imc: 25.7,
+    ultima_pa_sistolica: 128,
+    ultima_pa_diastolica: 78,
+    ultimo_hba1c: 7.9,
+    data_ultima_consulta: daysAgo(60),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Insulina Glargina", "Pregabalina 75mg"]
+  },
+
+  // 9. Alto Risco - IAM prévio (I21) + HAS
+  {
+    id: "12",
+    nome: "Edilson Moura Gomes",
+    cpf: "222.333.444-55",
+    sexo: "M",
+    idade: 59,
+    data_nascimento: "1965-02-28",
+    endereco: "Rua do Chaco, 12",
+    microarea: "03",
+    cids: ["I10", "I21"], // HAS + IAM prévio
+    peso: 88,
+    altura: 1.78,
+    imc: 27.8,
+    ultima_pa_sistolica: 150,
+    ultima_pa_diastolica: 92,
+    ultimo_hba1c: null,
+    data_ultima_consulta: daysAgo(30),
+    data_ultima_visita_domiciliar: daysAgo(14),
+    lista_prescricao: ["AAS 100mg", "Atenolol 50mg", "Sinvastatina 20mg", "Losartana 50mg"]
+  },
+
+  // ==========================================
+  // MÉDIO RISCO (AMARELO) — Diversos motivos
+  // ==========================================
+
+  // 10. Médio Risco - PA 160-179 (HAS Estágio 2) + HbA1c 7.1-9%
   {
     id: "2",
     nome: "João Carlos Oliveira",
@@ -59,18 +248,155 @@ export const mockPatients: PatientMock[] = [
     data_nascimento: "1966-08-20",
     endereco: "Av Brasil, 444",
     microarea: "01",
-    cids: ["I10", "E11.9"],
+    cids: ["I10", "E11.9"], // HAS + DM (sinergia perigosa)
     peso: 90,
     altura: 1.75,
     imc: 29.4,
     ultima_pa_sistolica: 165,
     ultima_pa_diastolica: 105,
     ultimo_hba1c: 7.8,
-    data_ultima_consulta: new Date().toISOString(), // Hoje (Assistido recentemente)
+    data_ultima_consulta: today(),
     data_ultima_visita_domiciliar: null,
     lista_prescricao: ["Metformina 850mg", "Losartana 50mg"]
   },
-  // 3. Risco Verde - HAS Controlada
+
+  // 11. Médio Risco - Obesidade (IMC >= 30) + HAS
+  {
+    id: "13",
+    nome: "Sandra Maria Rodrigues",
+    cpf: "333.444.555-66",
+    sexo: "F",
+    idade: 48,
+    data_nascimento: "1976-09-03",
+    endereco: "Rua Tabajara, 77",
+    microarea: "01",
+    cids: ["I10", "E66.9"], // HAS + Obesidade
+    peso: 98,
+    altura: 1.62,
+    imc: 37.3,
+    ultima_pa_sistolica: 145,
+    ultima_pa_diastolica: 92,
+    ultimo_hba1c: null,
+    data_ultima_consulta: daysAgo(25),
+    data_ultima_visita_domiciliar: daysAgo(12),
+    lista_prescricao: ["Losartana 50mg", "Hidroclorotiazida 25mg"]
+  },
+
+  // 12. Médio Risco - HbA1c entre 7.1-9% (DM em ajuste)
+  {
+    id: "14",
+    nome: "Carlos Eduardo Nascimento",
+    cpf: "444.555.666-77",
+    sexo: "M",
+    idade: 55,
+    data_nascimento: "1969-11-15",
+    endereco: "Rua Sete de Setembro, 230",
+    microarea: "02",
+    cids: ["E11.9"], // DM
+    peso: 83,
+    altura: 1.73,
+    imc: 27.7,
+    ultima_pa_sistolica: 132,
+    ultima_pa_diastolica: 84,
+    ultimo_hba1c: 8.2,
+    data_ultima_consulta: daysAgo(15),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Metformina 1000mg", "Glimepirida 2mg"]
+  },
+
+  // 13. Médio Risco - Idade de risco (M > 55) + HAS + DM sinergia
+  {
+    id: "15",
+    nome: "Lúcia Fernandes Cavalcanti",
+    cpf: "555.666.777-88",
+    sexo: "F",
+    idade: 62,
+    data_nascimento: "1962-05-20",
+    endereco: "Rua Dom Bosco, 45",
+    microarea: "02",
+    cids: ["I10", "E11.9"], // HAS + DM
+    peso: 72,
+    altura: 1.60,
+    imc: 28.1,
+    ultima_pa_sistolica: 142,
+    ultima_pa_diastolica: 88,
+    ultimo_hba1c: 7.5,
+    data_ultima_consulta: daysAgo(40),
+    data_ultima_visita_domiciliar: daysAgo(20),
+    lista_prescricao: ["Metformina 500mg", "Enalapril 20mg"]
+  },
+
+  // 14. Médio Risco - PA Estágio 2 isolada
+  {
+    id: "16",
+    nome: "Fernando Augusto Melo",
+    cpf: "666.777.888-99",
+    sexo: "M",
+    idade: 50,
+    data_nascimento: "1974-03-10",
+    endereco: "Rua da Penha, 150",
+    microarea: "03",
+    cids: ["I10"], // HAS
+    peso: 85,
+    altura: 1.76,
+    imc: 27.4,
+    ultima_pa_sistolica: 168,
+    ultima_pa_diastolica: 102,
+    ultimo_hba1c: null,
+    data_ultima_consulta: daysAgo(10),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Anlodipino 5mg", "Losartana 50mg"]
+  },
+
+  // 15. Médio Risco - DM há mais de 10 anos + Obesidade
+  {
+    id: "17",
+    nome: "Teresa Cristina de Almeida",
+    cpf: "777.888.999-00",
+    sexo: "F",
+    idade: 57,
+    data_nascimento: "1967-08-25",
+    endereco: "Rua Hélio Ramos, 33",
+    microarea: "01",
+    cids: ["E11.9", "E66.9"], // DM + Obesidade
+    peso: 102,
+    altura: 1.63,
+    imc: 38.4,
+    ultima_pa_sistolica: 138,
+    ultima_pa_diastolica: 86,
+    ultimo_hba1c: 7.3,
+    data_ultima_consulta: daysAgo(35),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Metformina 850mg", "Dapagliflozina 10mg"]
+  },
+
+  // 16. Médio Risco - Idade > 65 (F) + HAS controlada
+  {
+    id: "18",
+    nome: "Josefa Barbosa da Rocha",
+    cpf: "888.999.000-11",
+    sexo: "F",
+    idade: 70,
+    data_nascimento: "1954-12-12",
+    endereco: "Rua Benfica, 200",
+    microarea: "03",
+    cids: ["I10"], // HAS
+    peso: 65,
+    altura: 1.56,
+    imc: 26.7,
+    ultima_pa_sistolica: 138,
+    ultima_pa_diastolica: 85,
+    ultimo_hba1c: null,
+    data_ultima_consulta: daysAgo(50),
+    data_ultima_visita_domiciliar: daysAgo(25),
+    lista_prescricao: ["Enalapril 10mg"]
+  },
+
+  // ==========================================
+  // RISCO CONTROLADO (VERDE)
+  // ==========================================
+
+  // 17. Verde - HAS controlada, jovem, sem comorbidades
   {
     id: "3",
     nome: "Pedro Albuquerque",
@@ -87,39 +413,19 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_sistolica: 130,
     ultima_pa_diastolica: 85,
     ultimo_hba1c: null,
-    data_ultima_consulta: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(), // 1 mês atrás
+    data_ultima_consulta: daysAgo(30),
     data_ultima_visita_domiciliar: null,
     lista_prescricao: ["Enalapril 10mg"]
   },
-  // 4. Alto Risco - DM Descontrolado (HbA1c > 9)
-  {
-    id: "4",
-    nome: "Ana Costa",
-    cpf: "444.444.444-44",
-    sexo: "F",
-    idade: 52,
-    data_nascimento: "1972-11-05",
-    endereco: "Rua da Paz, 77",
-    microarea: "02",
-    cids: ["E11.9", "E66.9"], // E66.9 = Obesidade
-    peso: 105,
-    altura: 1.65,
-    imc: 38.6,
-    ultima_pa_sistolica: 135,
-    ultima_pa_diastolica: 80,
-    ultimo_hba1c: 10.2, // > 9 = Alto Risco
-    data_ultima_consulta: "2025-01-15T00:00:00.000Z", // Antiga (Busca Ativa)
-    data_ultima_visita_domiciliar: "2025-06-20T00:00:00.000Z",
-    lista_prescricao: ["Insulina NPH", "Metformina 850mg"]
-  },
-  // 5. Baixo Risco - DM Controlado
+
+  // 18. Verde - DM controlado (HbA1c <= 7%)
   {
     id: "5",
-    nome: "José Felipe",
+    nome: "José Felipe Andrade",
     cpf: "555.555.555-55",
     sexo: "M",
-    idade: 60,
-    data_nascimento: "1964-01-22",
+    idade: 49,
+    data_nascimento: "1975-01-22",
     endereco: "Travessa Mota, 12",
     microarea: "01",
     cids: ["E11.9"],
@@ -129,29 +435,96 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_sistolica: 125,
     ultima_pa_diastolica: 80,
     ultimo_hba1c: 6.5,
-    data_ultima_consulta: new Date(Date.now() - 45 * 24 * 60 * 60 * 1000).toISOString(), // 1.5 mêses atrás
+    data_ultima_consulta: daysAgo(45),
     data_ultima_visita_domiciliar: null,
     lista_prescricao: ["Metformina 500mg"]
   },
-  // 6. Alto Risco - HAS com complicação (AVC prévio)
+
+  // 19. Verde - HAS controlada, sem risco adicional
   {
-    id: "6",
-    nome: "Clodoaldo Mendes",
-    cpf: "666.666.666-66",
-    sexo: "M",
-    idade: 71,
-    data_nascimento: "1953-09-12",
-    endereco: "Av Caxangá, 1000",
-    microarea: "03",
-    cids: ["I10", "I63.9"], // I63 = AVC
-    peso: 82,
-    altura: 1.68,
-    imc: 29.1,
-    ultima_pa_sistolica: 155,
-    ultima_pa_diastolica: 95,
+    id: "19",
+    nome: "Renata Oliveira Dias",
+    cpf: "999.000.111-22",
+    sexo: "F",
+    idade: 42,
+    data_nascimento: "1982-07-19",
+    endereco: "Rua Princesa Isabel, 88",
+    microarea: "02",
+    cids: ["I10"],
+    peso: 62,
+    altura: 1.67,
+    imc: 22.2,
+    ultima_pa_sistolica: 120,
+    ultima_pa_diastolica: 78,
     ultimo_hba1c: null,
-    data_ultima_consulta: "2025-03-10T00:00:00.000Z", // Busca ativa
-    data_ultima_visita_domiciliar: "2025-05-15T00:00:00.000Z",
-    lista_prescricao: ["AAS 100mg", "Losartana 50mg", "Anlodipino 5mg"]
-  }
+    data_ultima_consulta: daysAgo(20),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Losartana 25mg"]
+  },
+
+  // 20. Verde - DM controlado, boa adesão
+  {
+    id: "20",
+    nome: "Marcos Vinícius Correia",
+    cpf: "000.111.222-33",
+    sexo: "M",
+    idade: 44,
+    data_nascimento: "1980-10-05",
+    endereco: "Rua Frei Caneca, 55",
+    microarea: "03",
+    cids: ["E11.9"],
+    peso: 76,
+    altura: 1.74,
+    imc: 25.1,
+    ultima_pa_sistolica: 118,
+    ultima_pa_diastolica: 76,
+    ultimo_hba1c: 6.1,
+    data_ultima_consulta: daysAgo(10),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Metformina 500mg"]
+  },
+
+  // 21. Verde - HAS controlada, consulta recente
+  {
+    id: "21",
+    nome: "Patrícia Gomes Fonseca",
+    cpf: "111.222.333-45",
+    sexo: "F",
+    idade: 39,
+    data_nascimento: "1985-04-14",
+    endereco: "Rua do Apolo, 32",
+    microarea: "01",
+    cids: ["I10"],
+    peso: 58,
+    altura: 1.64,
+    imc: 21.6,
+    ultima_pa_sistolica: 122,
+    ultima_pa_diastolica: 75,
+    ultimo_hba1c: null,
+    data_ultima_consulta: daysAgo(5),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Enalapril 5mg"]
+  },
+
+  // 22. Verde - DM tipo 1 controlado
+  {
+    id: "22",
+    nome: "Gabriel Santos Araújo",
+    cpf: "222.333.444-56",
+    sexo: "M",
+    idade: 35,
+    data_nascimento: "1989-09-28",
+    endereco: "Rua Real da Torre, 150",
+    microarea: "02",
+    cids: ["E10.9"], // DM Insulinodependente
+    peso: 72,
+    altura: 1.78,
+    imc: 22.7,
+    ultima_pa_sistolica: 115,
+    ultima_pa_diastolica: 72,
+    ultimo_hba1c: 6.8,
+    data_ultima_consulta: daysAgo(15),
+    data_ultima_visita_domiciliar: null,
+    lista_prescricao: ["Insulina Glargina", "Insulina Lispro"]
+  },
 ];
