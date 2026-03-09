@@ -3,6 +3,7 @@ import VisionRoutes from './VisionRoutes';
 import ChatRoutes from './ChatRoutes';
 import PrescriptionRoutes from './PrescriptionRoutes';
 import AuthRoutes from './AuthRoutes';
+import ProfessionalAuthRoutes from './ProfessionalAuthRoutes';
 import HealthRoutes from './HealthRoutes';
 import MedicationRoutes from './MedicationRoutes';
 import PharmacyRoutes from './PharmacyRoutes';
@@ -10,9 +11,13 @@ import { authMiddleware } from '../middlewares/authMiddleware';
 
 const router = Router();
 
+import RiskStratificationRoutes from './RiskStratificationRoutes';
+
 // Public routes
 router.use('/auth', AuthRoutes);
+router.use('/auth/web', ProfessionalAuthRoutes);
 router.use('/pharmacies', PharmacyRoutes);
+router.use('/risk-stratification', RiskStratificationRoutes);
 router.route('/').get((_, res) => {
   res.status(200).send('The server is running');
 });

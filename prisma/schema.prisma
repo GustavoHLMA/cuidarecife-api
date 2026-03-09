@@ -91,3 +91,14 @@ model Pharmacy {
   longitude    Float? // Coordenada para cálculo de distância
   createdAt    DateTime @default(now())
 }
+
+model Professional {
+  id         String   @id @default(cuid())
+  name       String
+  cpf        String   @unique
+  email      String   @unique
+  password   String
+  microareas String[]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

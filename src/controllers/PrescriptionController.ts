@@ -12,12 +12,6 @@ COMO ANALISAR:
 3. Dê ALERTAS importantes sobre cada medicamento
 4. Fale de forma SIMPLES e DIRETA
 
-INTERAÇÕES IMPORTANTES A VERIFICAR:
-- Metformina + Álcool = Problema grave
-- Anti-hipertensivos + Anti-inflamatórios = Reduz efeito
-- Insulina + Sulfonilureias = Risco de hipoglicemia
-- AAS + Anticoagulantes = Risco de sangramento
-
 FORMATO DA RESPOSTA:
 1. Uma frase resumindo se a receita parece OK ou tem problemas
 2. Se houver interação perigosa, AVISE CLARAMENTE
