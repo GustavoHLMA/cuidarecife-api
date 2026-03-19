@@ -12,12 +12,14 @@ import { authMiddleware } from '../middlewares/authMiddleware';
 const router = Router();
 
 import RiskStratificationRoutes from './RiskStratificationRoutes';
+import FeedbackRoutes from './FeedbackRoutes';
 
 // Public routes
 router.use('/auth', AuthRoutes);
 router.use('/auth/web', ProfessionalAuthRoutes);
 router.use('/pharmacies', PharmacyRoutes);
 router.use('/risk-stratification', RiskStratificationRoutes);
+router.use('/feedback', FeedbackRoutes);
 router.route('/').get((_, res) => {
   res.status(200).send('The server is running');
 });
