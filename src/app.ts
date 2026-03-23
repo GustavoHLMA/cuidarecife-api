@@ -11,6 +11,7 @@ app.use(cors({
     'http://localhost:3000',
     'http://localhost:8081',
     'https://cuidarecife-estratificacao.vercel.app',
+    'https://cuidarecife-mobile.vercel.app',
     // Permite conexões locais de túneis se existirem
     /https?:\/\/localhost:\d+/,
     /https?:\/\/.*\.ngrok-free\.app/
