@@ -110,3 +110,11 @@ model Feedback {
   createdAt DateTime @default(now())
 }
 
+model MobileFeedback {
+  id        String   @id @default(cuid())
+  rating    Int
+  feature   String   // "OCR" or "CHATBOT" or "CHATBOT_MSG"
+  details   String?  // To store specific context like AI message text
+  createdAt DateTime @default(now())
+}
+

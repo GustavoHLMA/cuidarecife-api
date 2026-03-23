@@ -13,6 +13,7 @@ const router = Router();
 
 import RiskStratificationRoutes from './RiskStratificationRoutes';
 import FeedbackRoutes from './FeedbackRoutes';
+import MobileFeedbackRoutes from './MobileFeedbackRoutes';
 
 // Public routes
 router.use('/auth', AuthRoutes);
@@ -20,6 +21,8 @@ router.use('/auth/web', ProfessionalAuthRoutes);
 router.use('/pharmacies', PharmacyRoutes);
 router.use('/risk-stratification', RiskStratificationRoutes);
 router.use('/feedback', FeedbackRoutes);
+router.use('/feedback/mobile', MobileFeedbackRoutes);
+
 router.route('/').get((_, res) => {
   res.status(200).send('The server is running');
 });
