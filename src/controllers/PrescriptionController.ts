@@ -80,7 +80,7 @@ Analise esta receita de forma SIMPLES e verifique interações.`;
 
     } catch (error: any) {
       if (error.name === 'ZodError') {
-        console.error('[Prescription] Zod validation error:', error.errors);
+        console.error('[Prescription] Erro de validação Zod:', error.errors);
         return res.status(400).json({ error: 'Dados de entrada inválidos', details: error.errors });
       }
       console.error('[Prescription] Erro na verificação:', error);

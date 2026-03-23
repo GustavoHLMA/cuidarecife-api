@@ -16,7 +16,7 @@ export const authMiddleware = (
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'No token provided' });
+    res.status(401).json({ error: 'Nenhum token fornecido' });
     return;
   }
 
@@ -31,7 +31,7 @@ export const authMiddleware = (
     req.user = decoded;
     next();
   } catch (error) {
-    res.status(401).json({ error: 'Invalid or expired token' });
+    res.status(401).json({ error: 'Token inválido ou expirado' });
     return;
   }
 };

@@ -9,11 +9,11 @@ export class MobileFeedbackController {
       const { rating, feature, details } = req.body;
 
       if (typeof rating !== "number" || rating < 0 || rating > 5) {
-        return res.status(400).json({ error: "Rating must be a number between 0 and 5" });
+        return res.status(400).json({ error: "A avaliação deve ser um número entre 0 e 5" });
       }
 
       if (!["OCR", "CHATBOT", "CHATBOT_MSG"].includes(feature)) {
-        return res.status(400).json({ error: "Feature must be either 'OCR', 'CHATBOT' or 'CHATBOT_MSG'" });
+        return res.status(400).json({ error: "A funcionalidade deve ser 'OCR', 'CHATBOT' ou 'CHATBOT_MSG'" });
       }
 
       const feedback = await prisma.mobileFeedback.create({
@@ -27,7 +27,7 @@ export class MobileFeedbackController {
       return res.status(201).json(feedback);
     } catch (error) {
       console.error("[MobileFeedbackController.create]", error);
-      return res.status(500).json({ error: "Internal server error" });
+      return res.status(500).json({ error: "Erro interno no servidor" });
     }
   }
 
@@ -42,7 +42,7 @@ export class MobileFeedbackController {
       return res.status(200).json(feedbacks);
     } catch (error) {
       console.error("[MobileFeedbackController.list]", error);
-      return res.status(500).json({ error: "Internal server error" });
+      return res.status(500).json({ error: "Erro interno no servidor" });
     }
   }
 }

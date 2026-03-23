@@ -52,12 +52,12 @@ export class ChatController {
     const { message, history } = req.body;
 
     if (!message) {
-      return res.status(400).json({ error: 'Message is required' });
+      return res.status(400).json({ error: 'A mensagem é obrigatória' });
     }
 
     if (!geminiService.isConfigured()) {
       console.error('[Chat] Gemini API key is not configured.');
-      return res.status(500).json({ error: 'Chat service is not configured correctly.' });
+      return res.status(500).json({ error: 'O serviço de chat não está configurado corretamente.' });
     }
 
     try {
@@ -117,7 +117,7 @@ export class ChatController {
 
       if (!result.success) {
         console.error('[Chat] Gemini error:', result.error);
-        return res.status(400).json({ error: result.error || 'Failed to get response from AI assistant.' });
+        return res.status(400).json({ error: result.error || 'Falha ao obter resposta do assistente de IA.' });
       }
 
       return res.json({
@@ -125,9 +125,9 @@ export class ChatController {
         ragUsed: ragStatus.documentCount > 0,
       });
 
-    } catch (error) {
-      console.error('[Chat] Error processing chat message:', error);
-      return res.status(500).json({ error: 'Internal server error while processing chat message.' });
+    } catch (error: any) {
+      console.error('[ChatController.sendMessage] Error:', error.message || error);
+      return res.status(500).json({ error: 'Erro interno ao processar a mensagem.' });
     }
   }
 }

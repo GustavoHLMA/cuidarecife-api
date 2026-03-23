@@ -6,13 +6,13 @@ import { z } from 'zod';
 const registerSchema = z.object({
   name: z.string().min(2, 'Name must be at least 2 characters'),
   cpf: z.string().min(11, 'Invalid CPF').max(14, 'Invalid CPF'),
-  email: z.string().email('Invalid email format'),
+  email: z.string().email('Formato de email inválido'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   microareas: z.array(z.string()).min(1, 'At least one microarea is required'),
 });
 
 const loginSchema = z.object({
-  email: z.string().email('Invalid email format'),
+  email: z.string().email('Formato de email inválido'),
   password: z.string().min(1, 'Password is required'),
 });
 
@@ -60,7 +60,7 @@ export class ProfessionalAuthController {
 
       const user = await professionalRepository.findByEmail(validatedData.email);
       if (!user) {
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return res.status(401).json({ error: 'Email ou senha inválidos' });
       }
 
       const isValidPassword = await professionalRepository.validatePassword(
@@ -68,7 +68,7 @@ export class ProfessionalAuthController {
         user.password
       );
       if (!isValidPassword) {
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return res.status(401).json({ error: 'Email ou senha inválidos' });
       }
 
       const accessToken = this.generateAccessToken(user.id, user.email, user.microareas);

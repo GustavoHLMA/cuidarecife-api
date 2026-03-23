@@ -35,7 +35,7 @@ export class HealthController {
     try {
       const userId = req.user?.userId;
       if (!userId) {
-        return res.status(401).json({ error: 'User not authenticated' });
+        return res.status(401).json({ error: 'Usuário não autenticado' });
       }
 
       const data = glucoseSchema.parse(req.body);
@@ -63,7 +63,7 @@ export class HealthController {
     try {
       const userId = req.user?.userId;
       if (!userId) {
-        return res.status(401).json({ error: 'User not authenticated' });
+        return res.status(401).json({ error: 'Usuário não autenticado' });
       }
 
       const limit = parseInt(req.query.limit as string) || 10;
@@ -86,7 +86,7 @@ export class HealthController {
     try {
       const userId = req.user?.userId;
       if (!userId) {
-        return res.status(401).json({ error: 'User not authenticated' });
+        return res.status(401).json({ error: 'Usuário não autenticado' });
       }
 
       const data = pressureSchema.parse(req.body);
@@ -114,7 +114,7 @@ export class HealthController {
     try {
       const userId = req.user?.userId;
       if (!userId) {
-        return res.status(401).json({ error: 'User not authenticated' });
+        return res.status(401).json({ error: 'Usuário não autenticado' });
       }
 
       const limit = parseInt(req.query.limit as string) || 10;
@@ -137,7 +137,7 @@ export class HealthController {
     try {
       const userId = req.user?.userId;
       if (!userId) {
-        return res.status(401).json({ error: 'User not authenticated' });
+        return res.status(401).json({ error: 'Usuário não autenticado' });
       }
 
       const data = prescriptionSchema.parse(req.body);
@@ -181,7 +181,7 @@ export class HealthController {
     try {
       const userId = req.user?.userId;
       if (!userId) {
-        return res.status(401).json({ error: 'User not authenticated' });
+        return res.status(401).json({ error: 'Usuário não autenticado' });
       }
 
       const prescription = await prisma.prescription.findFirst({
@@ -196,8 +196,8 @@ export class HealthController {
 
       return res.json({ prescription });
     } catch (error) {
-      console.error('Error fetching prescription:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      console.error(error);
+      return res.status(500).json({ error: 'Erro interno no servidor' });
     }
   }
 }

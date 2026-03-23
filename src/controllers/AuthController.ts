@@ -38,7 +38,7 @@ export class AuthController {
 
       const existingUser = await authRepository.findByEmail(validatedData.email);
       if (existingUser) {
-        return res.status(400).json({ error: 'Email already registered' });
+        return res.status(400).json({ error: 'Email já cadastrado' });
       }
 
       const user = await authRepository.create(validatedData);
@@ -62,7 +62,7 @@ export class AuthController {
 
       const user = await authRepository.findByEmail(validatedData.email);
       if (!user) {
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return res.status(401).json({ error: 'Email ou senha inválidos' });
       }
 
       const isValidPassword = await authRepository.validatePassword(
@@ -70,7 +70,7 @@ export class AuthController {
         user.password
       );
       if (!isValidPassword) {
-        return res.status(401).json({ error: 'Invalid email or password' });
+        return res.status(401).json({ error: 'Email ou senha inválidos' });
       }
 
       const accessToken = this.generateAccessToken(user.id, user.email);
@@ -102,7 +102,7 @@ export class AuthController {
       const { refreshToken } = req.body;
 
       if (!refreshToken) {
-        return res.status(400).json({ error: 'Refresh token is required' });
+        return res.status(400).json({ error: 'Token de atualização é obrigatório' });
       }
 
       let decoded: { userId: string; email: string };
@@ -111,13 +111,13 @@ export class AuthController {
           refreshToken,
           process.env.JWT_REFRESH_SECRET as string
         ) as { userId: string; email: string };
-      } catch {
-        return res.status(401).json({ error: 'Invalid refresh token' });
+      } catch (err) {
+        return res.status(401).json({ error: 'Token de atualização inválido' });
       }
 
       const user = await authRepository.findById(decoded.userId);
       if (!user || user.refreshToken !== refreshToken) {
-        return res.status(401).json({ error: 'Invalid refresh token' });
+        return res.status(401).json({ error: 'Token de atualização inválido' });
       }
 
       const newAccessToken = this.generateAccessToken(user.id, user.email);
@@ -131,7 +131,7 @@ export class AuthController {
       });
     } catch (error) {
       console.error('Error refreshing token:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      return res.status(500).json({ error: 'Erro interno no servidor' });
     }
   }
 
@@ -152,10 +152,10 @@ export class AuthController {
         }
       }
 
-      return res.json({ message: 'Logged out successfully' });
+      return res.json({ message: 'Logout realizado com sucesso' });
     } catch (error) {
       console.error('Error logging out:', error);
-      return res.status(500).json({ error: 'Internal server error' });
+      return res.status(500).json({ error: 'Erro interno no servidor' });
     }
   }
 }
