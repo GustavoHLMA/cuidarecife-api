@@ -23,9 +23,9 @@ if (isPecConfigured) {
     port: parseInt(process.env.PORTA_PEC || '5432', 10),
     user: process.env.USUARIO_PEC,
     password: process.env.SENHA_PEC,
-    max: 5,
+    max: 15,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    connectionTimeoutMillis: 30000,
   });
 
   // SEGURANÇA: Configura CADA conexão como somente leitura + schema correto

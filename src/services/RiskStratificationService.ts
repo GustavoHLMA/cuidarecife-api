@@ -15,13 +15,20 @@ export interface StratifiedPatient extends PatientMock {
 }
 
 export class RiskStratificationService {
-  private hasCids = ["I10"];
-  private dmCids = ["E10.9", "E11.9", "E13.9"];
-  private hasComplicadaCids = ["I11.0", "I12.9"];
-  private cardiovascularCids = ["I21", "I22", "I50", "I63"];
+  // CIDs expandidos — usa prefixo para cobrir todas as variações do PEC
+  // HAS: I10 (essencial), I11 (c/ cardiopatia), I12 (c/ nefropatia), I13 (c/ nefro+cardio), I15 (secundária)
+  private hasCids = ["I10", "I11", "I12", "I13", "I15"];
+  // DM: E10 (tipo 1), E11 (tipo 2), E12 (desnutrição), E13 (outros), E14 (inespecífico)
+  private dmCids = ["E10", "E11", "E12", "E13", "E14"];
+  private hasComplicadaCids = ["I11.0", "I12.9", "I13"];
+  // Cardiovascular: I21-I22 (IAM), I50 (ICC), I60-I64 (AVC hemorrágico/isquêmico)
+  private cardiovascularCids = ["I21", "I22", "I50", "I60", "I61", "I62", "I63", "I64"];
   private renalCids = ["N18", "N19"];
   private retinopatiaCids = ["H36.0"];
-  private neuropatiaCids = ["G63.2"];
+  // Neuropatia: G63.2 + G46 (síndromes vasculares cerebrais) + G30 (Alzheimer — risco crônico degenerativo)
+  private neuropatiaCids = ["G63.2", "G46", "G30"];
+  // Demência: F00-F03
+  private demenciaCids = ["F00", "F01", "F02", "F03"];
   private peDiabeticoCids = ["E10.5", "E11.5"];
 
   private isHAS(patient: PatientMock): boolean {
@@ -42,6 +49,7 @@ export class RiskStratificationService {
       ...this.renalCids,
       ...this.retinopatiaCids,
       ...this.neuropatiaCids,
+      ...this.demenciaCids,
       ...this.peDiabeticoCids
     ];
     return patient.cids.some(cid => highRiskCids.some(h => cid.startsWith(h)));
@@ -206,13 +214,25 @@ export class RiskStratificationService {
       }
 
       if (filters.smoking) {
-        // Requer join com tb_fat_cidadao_pec para acessar st_fumante
+        // st_fumante está em tb_fat_cad_individual, ligada via co_fat_cidadao_pec
         if (filters.smoking === 'Sim') {
-          extraWhere += ` AND EXISTS (SELECT 1 FROM tb_fat_cidadao_pec fcp2 WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fcp2.st_fumante = 1)`;
+          extraWhere += ` AND EXISTS (
+            SELECT 1 FROM tb_fat_cidadao_pec fcp2
+            JOIN tb_fat_cad_individual fci2 ON fci2.co_fat_cidadao_pec = fcp2.co_seq_fat_cidadao_pec
+            WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fci2.st_fumante = 1
+          )`;
         } else if (filters.smoking === 'Não') {
-          extraWhere += ` AND EXISTS (SELECT 1 FROM tb_fat_cidadao_pec fcp2 WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fcp2.st_fumante = 0)`;
+          extraWhere += ` AND EXISTS (
+            SELECT 1 FROM tb_fat_cidadao_pec fcp2
+            JOIN tb_fat_cad_individual fci2 ON fci2.co_fat_cidadao_pec = fcp2.co_seq_fat_cidadao_pec
+            WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fci2.st_fumante = 0
+          )`;
         } else if (filters.smoking === 'Sem Registro') {
-          extraWhere += ` AND NOT EXISTS (SELECT 1 FROM tb_fat_cidadao_pec fcp2 WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fcp2.st_fumante IS NOT NULL)`;
+          extraWhere += ` AND NOT EXISTS (
+            SELECT 1 FROM tb_fat_cidadao_pec fcp2
+            JOIN tb_fat_cad_individual fci2 ON fci2.co_fat_cidadao_pec = fcp2.co_seq_fat_cidadao_pec
+            WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fci2.st_fumante IS NOT NULL
+          )`;
         }
       }
 
@@ -327,7 +347,7 @@ export class RiskStratificationService {
                 WHEN sis >= 180 OR dia >= 110 THEN 'HIGH'
                 WHEN CAST("HbA1c" AS FLOAT) > 9 THEN 'HIGH'
                 WHEN CAST(REGEXP_REPLACE("Glicemia Capilar"::text, '[^0-9]', '', 'g') AS INTEGER) > 250 THEN 'HIGH'
-                WHEN "Condições" ~ '(I11.0|I12.9|I21|I22|I50|I63|N18|N19|H36.0|G63.2|E10.5|E11.5)' THEN 'HIGH'
+                WHEN "Condições" ~ '(I11\.0|I12\.9|I13|I21|I22|I50|I60|I61|I62|I63|I64|N18|N19|H36\.0|G63\.2|G46|G30|F00|F01|F02|F03|E10\.5|E11\.5)' THEN 'HIGH'
                 WHEN (sis >= 160 AND sis <= 179) OR (dia >= 100 AND dia <= 109) THEN 'MEDIUM'
                 WHEN CAST("HbA1c" AS FLOAT) > 7 AND CAST("HbA1c" AS FLOAT) <= 9 THEN 'MEDIUM'
                 WHEN CAST(REGEXP_REPLACE("Glicemia Capilar"::text, '[^0-9]', '', 'g') AS INTEGER) >= 126 AND CAST(REGEXP_REPLACE("Glicemia Capilar"::text, '[^0-9]', '', 'g') AS INTEGER) <= 250 THEN 'MEDIUM'
@@ -426,6 +446,14 @@ export class RiskStratificationService {
       return this.getTerritoryStatsMock(microarea);
     }
 
+    // [HOTFIX] A consulta de território inteira no PEC requer JOIN de tabelas transacionais enormes
+    // Para não congelar o Event Loop e não derrubar a rota paginada, faremos o cálculo consolidado Apenas
+    // se uma microárea específica for selecionada (que reduz os cálculos para 50-100 pacientes max).
+    // Se for TODAS (all) devolvemos um sumário rápido mockado ou os totais já cacheados (por enquanto usar Mock).
+    if (!microarea || microarea === 'all' || microarea.trim() === '') {
+       return this.getTerritoryStatsMock('all');
+    }
+
     try {
       const params: any[] = [];
       let microWhere = "";
@@ -473,41 +501,45 @@ export class RiskStratificationService {
           SELECT 
             bp.co_seq_cidadao,
             COALESCE(pc.cids, '') AS cids,
-            -- Última consulta
-            (SELECT MAX(fat.dt_registro) 
+            -- Última consulta (usa co_dim_tempo no formato YYYYMMDD)
+            (SELECT MAX(TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD')) 
              FROM tb_fat_atendimento_individual fat 
-             WHERE fat.co_cidadao = bp.co_seq_cidadao) AS ultima_consulta,
+             WHERE fat.co_fat_cidadao_pec IN (
+               SELECT fcp3.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp3 WHERE fcp3.co_cidadao = bp.co_seq_cidadao
+             )) AS ultima_consulta,
             -- Última visita domiciliar
-            (SELECT MAX(fav.dt_registro) 
+            (SELECT MAX(TO_DATE(fav.co_dim_tempo::text, 'YYYYMMDD')) 
              FROM tb_fat_visita_domiciliar fav 
-             WHERE fav.co_cidadao = bp.co_seq_cidadao) AS ultima_visita,
+             WHERE fav.co_fat_cidadao_pec IN (
+               SELECT fcp4.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp4 WHERE fcp4.co_cidadao = bp.co_seq_cidadao
+             )) AS ultima_visita,
             -- PA mais recente
-            (SELECT vl_resultado_peso 
-             FROM tb_fat_procedimento_atendimento fpa 
-             WHERE fpa.co_cidadao = bp.co_seq_cidadao 
-               AND fpa.co_seq_dim_procedimento IN (SELECT co_seq_dim_procedimento FROM tb_dim_procedimento WHERE ds_procedimento ILIKE '%peso%')
-             ORDER BY fpa.dt_registro DESC LIMIT 1) AS peso,
+            (SELECT CAST(m.nu_medicao_peso AS FLOAT) 
+             FROM tb_atend a 
+             JOIN tb_atend_prof ap ON a.co_seq_atend = ap.co_atend 
+             JOIN tb_medicao m ON ap.co_seq_atend_prof = m.co_atend_prof
+             WHERE a.co_prontuario = bp.co_seq_prontuario AND m.nu_medicao_peso IS NOT NULL
+             ORDER BY ap.dt_inicio DESC LIMIT 1) AS peso,
             -- HbA1c
-            (SELECT CAST(vl_resultado AS FLOAT) 
-             FROM tb_fat_procedimento_atendimento fpa 
-             WHERE fpa.co_cidadao = bp.co_seq_cidadao 
-               AND fpa.co_seq_dim_procedimento IN (SELECT co_seq_dim_procedimento FROM tb_dim_procedimento WHERE ds_procedimento ILIKE '%hemoglobina glicada%')
-             ORDER BY fpa.dt_registro DESC LIMIT 1) AS hba1c,
+            (SELECT CAST(hem.vl_hemoglobina_glicada AS FLOAT) 
+             FROM tb_exame_requisitado req 
+             JOIN tb_exame_hemoglobina_glicada hem ON req.co_seq_exame_requisitado = hem.co_exame_requisitado
+             WHERE req.co_prontuario = bp.co_seq_prontuario AND hem.vl_hemoglobina_glicada IS NOT NULL
+             ORDER BY COALESCE(req.dt_realizacao, req.dt_solicitacao, req.dt_resultado) DESC LIMIT 1) AS hba1c,
             -- Pressão sistólica e diastólica (para risco)
-            (SELECT CAST(SPLIT_PART(
-              (SELECT ds_filtro_proced FROM tb_fat_procedimento_atendimento fpa2 
-               WHERE fpa2.co_cidadao = bp.co_seq_cidadao AND ds_filtro_proced ~ '^[0-9]+/[0-9]+$'
-               ORDER BY fpa2.dt_registro DESC LIMIT 1)
-              , '/', 1) AS INTEGER)) AS sis,
-            (SELECT CAST(SPLIT_PART(
-              (SELECT ds_filtro_proced FROM tb_fat_procedimento_atendimento fpa2 
-               WHERE fpa2.co_cidadao = bp.co_seq_cidadao AND ds_filtro_proced ~ '^[0-9]+/[0-9]+$'
-               ORDER BY fpa2.dt_registro DESC LIMIT 1)
-              , '/', 2) AS INTEGER)) AS dia,
+            (SELECT CAST(SPLIT_PART(m.nu_medicao_pressao_arterial, '/', 1) AS INTEGER) 
+             FROM tb_atend a JOIN tb_atend_prof ap ON a.co_seq_atend = ap.co_atend JOIN tb_medicao m ON ap.co_seq_atend_prof = m.co_atend_prof
+             WHERE a.co_prontuario = bp.co_seq_prontuario AND m.nu_medicao_pressao_arterial IS NOT NULL AND m.nu_medicao_pressao_arterial LIKE '%/%'
+             ORDER BY ap.dt_inicio DESC LIMIT 1) AS sis,
+            (SELECT CAST(SPLIT_PART(m.nu_medicao_pressao_arterial, '/', 2) AS INTEGER) 
+             FROM tb_atend a JOIN tb_atend_prof ap ON a.co_seq_atend = ap.co_atend JOIN tb_medicao m ON ap.co_seq_atend_prof = m.co_atend_prof
+             WHERE a.co_prontuario = bp.co_seq_prontuario AND m.nu_medicao_pressao_arterial IS NOT NULL AND m.nu_medicao_pressao_arterial LIKE '%/%'
+             ORDER BY ap.dt_inicio DESC LIMIT 1) AS dia,
             -- Data da aferição PA
-            (SELECT fpa3.dt_registro FROM tb_fat_procedimento_atendimento fpa3 
-             WHERE fpa3.co_cidadao = bp.co_seq_cidadao AND fpa3.ds_filtro_proced ~ '^[0-9]+/[0-9]+$'
-             ORDER BY fpa3.dt_registro DESC LIMIT 1) AS data_afericao_pa
+            (SELECT ap.dt_inicio 
+             FROM tb_atend a JOIN tb_atend_prof ap ON a.co_seq_atend = ap.co_atend JOIN tb_medicao m ON ap.co_seq_atend_prof = m.co_atend_prof
+             WHERE a.co_prontuario = bp.co_seq_prontuario AND m.nu_medicao_pressao_arterial IS NOT NULL
+             ORDER BY ap.dt_inicio DESC LIMIT 1) AS data_afericao_pa
           FROM BasePatients bp
           LEFT JOIN PatientCids pc ON bp.co_seq_cidadao = pc.co_seq_cidadao
         ),
@@ -528,7 +560,7 @@ export class RiskStratificationService {
             -- Risk classification
             CASE
               WHEN COALESCE(sis, 0) >= 180 OR COALESCE(dia, 0) >= 110 THEN 'HIGH'
-              WHEN cids ~ '(I11.0|I12.9|I21|I22|I50|I63|N18|N19|H36.0|G63.2|E10.5|E11.5)' THEN 'HIGH'
+              WHEN cids ~ '(I11\.0|I12\.9|I13|I21|I22|I50|I60|I61|I62|I63|I64|N18|N19|H36\.0|G63\.2|G46|G30|F00|F01|F02|F03|E10\.5|E11\.5)' THEN 'HIGH'
               WHEN (COALESCE(sis, 0) >= 140 OR COALESCE(dia, 0) >= 90) AND cids ~ 'E1' THEN 'HIGH'
               WHEN COALESCE(hba1c, 0) > 9 THEN 'HIGH'
               WHEN (COALESCE(sis, 0) >= 160 AND COALESCE(sis, 0) <= 179) OR (COALESCE(dia, 0) >= 100 AND COALESCE(dia, 0) <= 109) THEN 'MEDIUM'
