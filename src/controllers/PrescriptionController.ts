@@ -23,7 +23,8 @@ Seja BREVE - máximo 100 palavras.`;
 export const PrescriptionController = {
   async verifyPrescription(req: Request, res: Response, next: NextFunction) {
     try {
-      console.log('[Prescription] Recebida requisição de verificação:', req.body);
+      // SEGURANÇA: não logar dados de prescrição (LGPD)
+      console.log(`[Prescription] Verificação recebida: ${req.body?.medications?.length || 0} medicamento(s)`);
 
       const prescriptionData = PrescriptionVerificationRequestSchema.parse(req.body) as PrescriptionVerificationRequest;
 
