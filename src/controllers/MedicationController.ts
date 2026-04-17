@@ -1,10 +1,8 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import prisma from '../db';
 import { geminiService } from '../services/GeminiService';
 import { visionService } from '../services/VisionService';
 import { AuthRequest } from '../middlewares/authMiddleware';
-
-const prisma = new PrismaClient();
 
 // Prompt para extrair medicamentos de texto OCR
 const MEDICATION_EXTRACTION_PROMPT = `Você é um especialista em análise de prescrições médicas brasileiras.
@@ -91,7 +89,7 @@ export const MedicationController = {
 
     } catch (error: any) {
       console.error('[MedicationController] Erro em extractFromImage:', error);
-      return res.status(500).json({ error: error.message || 'Erro interno' });
+      return res.status(500).json({ error: 'Erro interno' });
     }
   },
 
@@ -260,7 +258,7 @@ export const MedicationController = {
 
     } catch (error: any) {
       console.error('[MedicationController] Erro em getTodayMedications:', error);
-      return res.status(500).json({ error: error.message || 'Erro interno' });
+      return res.status(500).json({ error: 'Erro interno' });
     }
   },
 
@@ -302,7 +300,7 @@ export const MedicationController = {
 
     } catch (error: any) {
       console.error('[MedicationController] Erro em recordDose:', error);
-      return res.status(500).json({ error: error.message || 'Erro interno' });
+      return res.status(500).json({ error: 'Erro interno' });
     }
   },
 
@@ -337,7 +335,7 @@ export const MedicationController = {
 
     } catch (error: any) {
       console.error('[MedicationController] Erro em deleteDose:', error);
-      return res.status(500).json({ error: error.message || 'Erro interno' });
+      return res.status(500).json({ error: 'Erro interno' });
     }
   },
 
@@ -379,7 +377,7 @@ export const MedicationController = {
 
     } catch (error: any) {
       console.error('[MedicationController] Erro em markForgotten:', error);
-      return res.status(500).json({ error: error.message || 'Erro interno' });
+      return res.status(500).json({ error: 'Erro interno' });
     }
   },
 };

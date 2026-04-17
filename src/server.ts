@@ -4,6 +4,7 @@ import * as path from 'path';
 
 import app from './app';
 import prisma from './db';
+import { closePecPool, testPecConnection } from './db/pecDb';
 import { ragService } from './services';
 
 const PORT = process.env.PORT || 3001;
@@ -30,6 +31,13 @@ const server = app.listen(Number(PORT), HOST, async () => {
   } catch (error) {
     console.warn('[RAG] Falha ao indexar protocolos (não crítico):', error);
   }
+
+  // Testa conexão com o banco PEC (e-SUS)
+  try {
+    await testPecConnection();
+  } catch (error) {
+    console.warn('[PEC DB] Não foi possível conectar ao banco PEC (VPN ativa?).');
+  }
 });
 
 // Graceful shutdown
@@ -41,7 +49,8 @@ const shutdown = async (signal: string) => {
 
     try {
       await prisma.$disconnect();
-      console.log('Database connection closed');
+      await closePecPool();
+      console.log('Database connections closed');
       process.exit(0);
     } catch (error) {
       console.error('Error during shutdown:', error);
@@ -58,3 +67,4 @@ const shutdown = async (signal: string) => {
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+ 

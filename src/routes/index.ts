@@ -15,13 +15,10 @@ import RiskStratificationRoutes from './RiskStratificationRoutes';
 import FeedbackRoutes from './FeedbackRoutes';
 import MobileFeedbackRoutes from './MobileFeedbackRoutes';
 
-// Public routes
+// Public routes (sem autenticação)
 router.use('/auth', AuthRoutes);
-router.use('/auth/web', ProfessionalAuthRoutes);
+router.use('/auth/web', ProfessionalAuthRoutes); // login é público, register protegido internamente
 router.use('/pharmacies', PharmacyRoutes);
-router.use('/risk-stratification', RiskStratificationRoutes);
-router.use('/feedback', FeedbackRoutes);
-router.use('/feedback/mobile', MobileFeedbackRoutes);
 
 router.route('/').get((_, res) => {
   res.status(200).send('The server is running');
@@ -29,9 +26,13 @@ router.route('/').get((_, res) => {
 
 // Protected routes (require JWT)
 router.use('/vision', authMiddleware, VisionRoutes);
+router.use('/risk-stratification', authMiddleware, RiskStratificationRoutes);
 router.use('/chat', authMiddleware, ChatRoutes);
 router.use('/prescription', authMiddleware, PrescriptionRoutes);
 router.use('/health', authMiddleware, HealthRoutes);
 router.use('/medications', authMiddleware, MedicationRoutes);
+router.use('/feedback', authMiddleware, FeedbackRoutes);
+router.use('/feedback/mobile', authMiddleware, MobileFeedbackRoutes);
+
 
 export default router;

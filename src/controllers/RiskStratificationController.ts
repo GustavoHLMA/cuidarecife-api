@@ -9,6 +9,47 @@ class RiskStratificationController {
     res.json(data);
   }
 
+  public async getStratifiedPaginated(req: Request, res: Response): Promise<void> {
+    try {
+      const page = parseInt(req.query.page as string, 10) || 1;
+      const pageSize = parseInt(req.query.pageSize as string, 10) || 25; // 25 as requested
+      const microarea = req.query.microarea as string | undefined;
+
+      const search = req.query.search as string | undefined;
+      const riskLevel = req.query.riskLevel as string | undefined;
+      const ageMin = req.query.ageMin ? parseInt(req.query.ageMin as string, 10) : undefined;
+      const ageMax = req.query.ageMax ? parseInt(req.query.ageMax as string, 10) : undefined;
+      const consultMonths = req.query.consultMonths ? parseInt(req.query.consultMonths as string, 10) : undefined;
+      
+      let cids: string[] | undefined;
+      if (req.query.cids) {
+        cids = Array.isArray(req.query.cids)
+          ? (req.query.cids as string[])
+          : (req.query.cids as string).split(',');
+      }
+
+      const sex = req.query.sex as string | undefined;
+      const smoking = req.query.smoking as string | undefined;
+
+      const filters: any = {
+        microarea,
+        search,
+        riskLevel,
+        ageRange: ageMin !== undefined && ageMax !== undefined ? [ageMin, ageMax] as [number, number] : undefined,
+        cids,
+        consultMonths,
+        sex,
+        smoking,
+      };
+
+      const result = await riskStratificationService.getStratifiedPaginated(page, pageSize, filters);
+      res.json(result);
+    } catch (error) {
+      console.error('Error fetching paginated stratified patients:', error);
+      res.status(500).json({ error: 'Failed to fetch patients' });
+    }
+  }
+
   public getDiabetics(req: Request, res: Response): void {
     const { microarea } = req.query;
     const data = riskStratificationService.getDiabeticPatients(microarea as string | undefined);
@@ -41,6 +82,26 @@ class RiskStratificationController {
     const cidsArray = cids.split(',').map(c => c.trim());
     const data = riskStratificationService.getByCids(cidsArray, microarea as string | undefined);
     res.json(data);
+  }
+
+  public async getMicroareas(req: Request, res: Response): Promise<void> {
+    try {
+      const data = await riskStratificationService.getMicroareas();
+      res.json(data);
+    } catch (e) {
+      res.status(500).json([]);
+    }
+  }
+
+  public async getTerritoryStats(req: Request, res: Response): Promise<void> {
+    try {
+      const microarea = req.query.microarea as string | undefined;
+      const stats = await riskStratificationService.getTerritoryStats(microarea);
+      res.json(stats);
+    } catch (error) {
+      console.error('Error fetching territory stats:', error);
+      res.status(500).json({ error: 'Failed to fetch territory statistics' });
+    }
   }
 
 }

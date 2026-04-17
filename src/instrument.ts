@@ -6,7 +6,8 @@ import * as Sentry from '@sentry/node';
 Sentry.init({
   dsn: process.env.SENTRY_DSN,
 
-  sendDefaultPii: true,
+  // SEGURANÇA: desabilitado para não enviar dados sensíveis de pacientes (LGPD)
+  sendDefaultPii: false,
 
   tracesSampleRate: 1.0,
 

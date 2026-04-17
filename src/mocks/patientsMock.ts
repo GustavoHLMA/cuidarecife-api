@@ -21,7 +21,7 @@ export interface PatientMock {
   glicemia_jejum: number | null; // mg/dL — Protocolo SBD
 
   // Fatores de risco adicionais (Protocolo Municipal do Recife)
-  tabagismo: boolean;
+  fumante: string;
   dislipidemia: boolean;
   historico_familiar_precoce: boolean; // DCV precoce em parentes de 1º grau
   data_diagnostico_dm: string | null; // ISO Date — para calcular "DM > 10 anos"
@@ -63,7 +63,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 115,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: false,
     data_diagnostico_dm: null,
@@ -91,7 +91,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 80,
     ultimo_hba1c: 10.2,
     glicemia_jejum: 280, // > 250 = Alto Risco
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: true,
     data_diagnostico_dm: yearsAgo(15), // DM há 15 anos
@@ -119,7 +119,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 95,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: true, // Tabagista
+    fumante: 'Não', // Tabagista
     dislipidemia: true,
     historico_familiar_precoce: true,
     data_diagnostico_dm: null,
@@ -147,7 +147,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 100,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: null,
@@ -175,7 +175,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 88,
     ultimo_hba1c: 8.5,
     glicemia_jejum: 200,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(18),
@@ -203,7 +203,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 95,
     ultimo_hba1c: 9.5,
     glicemia_jejum: 270,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(12),
@@ -231,7 +231,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 82,
     ultimo_hba1c: 8.8,
     glicemia_jejum: 210,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(20),
@@ -259,7 +259,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 78,
     ultimo_hba1c: 7.9,
     glicemia_jejum: 180,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(25),
@@ -287,7 +287,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 92,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: true, // Tabagista
+    fumante: 'Não', // Tabagista
     dislipidemia: true,
     historico_familiar_precoce: true,
     data_diagnostico_dm: null,
@@ -315,7 +315,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 94,
     ultimo_hba1c: 7.0,
     glicemia_jejum: 135,
-    tabagismo: true,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(8),
@@ -343,7 +343,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 88,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: false,
     data_diagnostico_dm: null,
@@ -371,7 +371,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 82,
     ultimo_hba1c: 8.6,
     glicemia_jejum: 265, // > 250 = Alto Risco DM
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: true,
     data_diagnostico_dm: yearsAgo(6),
@@ -403,7 +403,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 105,
     ultimo_hba1c: 7.8,
     glicemia_jejum: 180, // 126-250 = Médio
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(5),
@@ -431,7 +431,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 92,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: true, // Tabagista = fator médio risco
+    fumante: 'Não', // Tabagista = fator médio risco
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: null,
@@ -459,7 +459,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 84,
     ultimo_hba1c: 8.2,
     glicemia_jejum: 195, // 126-250 = Médio
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true, // Dislipidemia = fator médio
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(7),
@@ -487,7 +487,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 86,
     ultimo_hba1c: 7.5,
     glicemia_jejum: 145,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: true,
     data_diagnostico_dm: yearsAgo(11), // DM > 10 anos = Médio
@@ -515,7 +515,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 102,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: true, // Histórico familiar
     data_diagnostico_dm: null,
@@ -543,7 +543,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 86,
     ultimo_hba1c: 7.3,
     glicemia_jejum: 140,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: true,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(14), // DM > 10 anos
@@ -571,7 +571,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 85,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: null,
@@ -603,7 +603,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 85,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: null,
@@ -631,7 +631,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 80,
     ultimo_hba1c: 6.5,
     glicemia_jejum: 110,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(3),
@@ -659,7 +659,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 78,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: null,
@@ -687,7 +687,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 76,
     ultimo_hba1c: 6.1,
     glicemia_jejum: 98,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(2),
@@ -715,7 +715,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 75,
     ultimo_hba1c: null,
     glicemia_jejum: null,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: null,
@@ -743,7 +743,7 @@ export const mockPatients: PatientMock[] = [
     ultima_pa_diastolica: 72,
     ultimo_hba1c: 6.8,
     glicemia_jejum: 105,
-    tabagismo: false,
+    fumante: 'Não',
     dislipidemia: false,
     historico_familiar_precoce: false,
     data_diagnostico_dm: yearsAgo(10),

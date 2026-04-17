@@ -35,7 +35,6 @@ export class VisionController {
       console.error('[Vision] Erro interno ao processar imagem:', error);
       res.status(500).json({
         message: 'Erro interno do servidor ao analisar imagem.',
-        error: error.message,
       });
     }
   }
