@@ -381,7 +381,11 @@ export class RiskStratificationService {
       }
 
       fullQuery += finalWhere;
-      fullQuery += ` LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+
+      const cteAlreadyPaginated = !filters.riskLevel && (!filters.cids || filters.cids.length === 0) && filters.consultMonths === undefined;
+      if (!cteAlreadyPaginated) {
+        fullQuery += ` LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+      }
 
       const rows = await pecQuery(fullQuery, dataParams);
       if (!rows) throw new Error('Query failed');
