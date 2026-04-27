@@ -142,7 +142,7 @@ export class RiskStratificationService {
       // Fatores de risco para HAS Controlada
       if (this.isHAS(patient) && !this.isPANaoControlada(patient)) {
         const idade = patient.idade;
-        const isMasc = patient.sexo === 'MASCULINO';
+        const isMasc = patient.sexo === 'M';
 
         if ((isMasc && idade > 55) || (!isMasc && idade > 65)) {
           mediumRiskReasons.push("HAS Controlada + Idade de risco");
