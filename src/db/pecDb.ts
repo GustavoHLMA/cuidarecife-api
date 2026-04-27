@@ -64,19 +64,29 @@ export async function pecQuery<T = any>(text: string, params?: any[]): Promise<T
     throw new Error('Apenas consultas SELECT são permitidas no banco PEC');
   }
 
-  try {
-    const start = Date.now();
-    const result = await pecPool.query(text, params);
-    const duration = Date.now() - start;
-    
-    // AUDITORIA: log de acesso a dados PEC (sem dados sensíveis)
-    console.log(`[PEC DB] [AUDIT] Query executada: ${result.rowCount} rows, ${duration}ms`);
-    
-    return result.rows as T[];
-  } catch (error: any) {
-    console.error('[PEC DB] Query error:', error.message);
-    throw error;
+  let retries = 2;
+  while (retries >= 0) {
+    try {
+      const start = Date.now();
+      const result = await pecPool.query(text, params);
+      const duration = Date.now() - start;
+      
+      // AUDITORIA: log de acesso a dados PEC (sem dados sensíveis)
+      console.log(`[PEC DB] [AUDIT] Query executada: ${result.rowCount} rows, ${duration}ms`);
+      
+      return result.rows as T[];
+    } catch (error: any) {
+      if (retries === 0 || (!error.message?.includes('ETIMEDOUT') && !error.message?.includes('timeout'))) {
+        console.error('[PEC DB] Query error:', error.message);
+        throw error;
+      }
+      console.warn(`[PEC DB] Query timeout (${error.message}). Retrying... (${retries} attempts left)`);
+      retries--;
+      // Small delay before retrying
+      await new Promise(r => setTimeout(r, 1000));
+    }
   }
+  return null;
 }
 
 /**

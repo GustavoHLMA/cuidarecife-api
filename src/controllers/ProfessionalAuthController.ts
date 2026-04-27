@@ -8,7 +8,8 @@ const registerSchema = z.object({
   cpf: z.string().min(11, 'Invalid CPF').max(14, 'Invalid CPF'),
   email: z.string().email('Formato de email inválido'),
   password: z.string().min(6, 'Password must be at least 6 characters'),
-  microareas: z.array(z.string()).min(1, 'At least one microarea is required'),
+  microareas: z.array(z.string()).optional().default([]),
+  unidades_saude: z.array(z.string()).optional().default([]),
 });
 
 const loginSchema = z.object({
@@ -17,9 +18,9 @@ const loginSchema = z.object({
 });
 
 export class ProfessionalAuthController {
-  private generateAccessToken(userId: string, email: string, microareas: string[]): string {
+  private generateAccessToken(userId: string, email: string, microareas: string[], unidades_saude: string[]): string {
     return jwt.sign(
-      { userId, email, role: 'PROFESSIONAL', microareas },
+      { userId, email, role: 'PROFESSIONAL', microareas, unidades_saude },
       process.env.JWT_ACCESS_SECRET as string,
       { expiresIn: '8h' }
     );
@@ -71,7 +72,7 @@ export class ProfessionalAuthController {
         return res.status(401).json({ error: 'Email ou senha inválidos' });
       }
 
-      const accessToken = this.generateAccessToken(user.id, user.email, user.microareas);
+      const accessToken = this.generateAccessToken(user.id, user.email, user.microareas, user.unidades_saude);
 
       return res.json({
         accessToken,
@@ -81,6 +82,7 @@ export class ProfessionalAuthController {
           email: user.email,
           cpf: user.cpf,
           microareas: user.microareas,
+          unidades_saude: user.unidades_saude,
         },
       });
     } catch (error) {

@@ -1,7 +1,10 @@
 import { Router } from 'express';
 import riskController from '../controllers/RiskStratificationController';
+import { optionalAuthMiddleware } from '../middlewares/optionalAuthMiddleware';
 
 const router = Router();
+
+router.use(optionalAuthMiddleware);
 
 // Endpoint Principal - Análise do Risco com Paginação e Filtros
 router.get('/', riskController.getStratifiedPaginated);
