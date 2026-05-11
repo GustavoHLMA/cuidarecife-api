@@ -43,11 +43,11 @@ app.use(globalLimiter);
 
 // Rate limiting agressivo para rotas de autenticação (anti brute-force)
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 10, // máximo 10 tentativas de login por IP
+  windowMs: 5 * 60 * 1000, // 5 minutos
+  max: 50, // máximo 50 tentativas de login por IP
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas tentativas de login. Tente novamente em 15 minutos.' },
+  message: { error: 'Muitas tentativas de login. Tente novamente em 5 minutos.' },
 });
 app.use('/auth', authLimiter);
 
