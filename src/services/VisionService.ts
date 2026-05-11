@@ -1,4 +1,5 @@
 import fetch from 'node-fetch';
+import sharp from 'sharp';
 
 // ===== CONFIGURAÇÃO CENTRALIZADA DO GOOGLE VISION =====
 const VISION_CONFIG = {
@@ -41,8 +42,29 @@ class VisionService {
   }
 
   /**
-   * Verifica se a API key está configurada
+   * Redimensiona e comprime a imagem para garantir que fique abaixo do limite do Google (10MB)
+   * e otimiza para OCR (max 1600px costuma ser o ideal).
    */
+  private async optimizeImage(base64Image: string): Promise<string> {
+    try {
+      // Remove prefixo de data URI se existir
+      const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, '');
+      const buffer = Buffer.from(base64Data, 'base64');
+
+      // Comprime a imagem para JPEG com qualidade 80 e redimensiona para max 1600px
+      // Isso reduz imagens de 20mb para ~500kb mantendo a leitura perfeita
+      const optimizedBuffer = await sharp(buffer)
+        .resize(1600, 1600, { fit: 'inside', withoutEnlargement: true })
+        .jpeg({ quality: 80 })
+        .toBuffer();
+
+      return optimizedBuffer.toString('base64');
+    } catch (error) {
+      console.warn('[VisionService] Falha ao otimizar imagem, tentando enviar original:', error);
+      return base64Image.replace(/^data:image\/\w+;base64,/, '');
+    }
+  }
+
   isConfigured(): boolean {
     return !!this.apiKey;
   }
@@ -58,13 +80,16 @@ class VisionService {
       };
     }
 
+    // Otimização automática: reduz o tamanho e garante compatibilidade com o limite de 10MB do Google
+    const optimizedBase64 = await this.optimizeImage(base64Image);
+
     const url = `${this.baseUrl}?key=${this.apiKey}`;
 
     const requestPayload = {
       requests: [
         {
           image: {
-            content: base64Image,
+            content: optimizedBase64,
           },
           features: [{ type: 'TEXT_DETECTION', maxResults: 10 }],
           imageContext: {
@@ -131,8 +156,5 @@ class VisionService {
   }
 }
 
-// Exporta instância singleton
 export const visionService = new VisionService();
-
-// Exporta tipos para uso externo
 export type { VisionResult };
