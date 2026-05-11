@@ -51,8 +51,9 @@ const authLimiter = rateLimit({
 });
 app.use('/auth', authLimiter);
 
-// Body limit: 15mb (folga para imagens de OCR em alta qualidade)
-app.use(express.json({ limit: '15mb' }));
+// Body limit: 50mb (suporta fotos de alta resolução para OCR)
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
 app.use(router);
 
 Sentry.setupExpressErrorHandler(app);
