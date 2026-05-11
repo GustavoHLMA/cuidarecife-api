@@ -10,6 +10,7 @@ const registerSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters'),
   microareas: z.array(z.string()).optional().default([]),
   unidades_saude: z.array(z.string()).optional().default([]),
+  ine: z.string().optional().default(''),
 });
 
 const loginSchema = z.object({
@@ -18,9 +19,9 @@ const loginSchema = z.object({
 });
 
 export class ProfessionalAuthController {
-  private generateAccessToken(userId: string, email: string, microareas: string[], unidades_saude: string[]): string {
+  private generateAccessToken(userId: string, email: string, microareas: string[], unidades_saude: string[], ine: string | null): string {
     return jwt.sign(
-      { userId, email, role: 'PROFESSIONAL', microareas, unidades_saude },
+      { userId, email, role: 'PROFESSIONAL', microareas, unidades_saude, ine },
       process.env.JWT_ACCESS_SECRET as string,
       { expiresIn: '8h' }
     );
@@ -72,7 +73,7 @@ export class ProfessionalAuthController {
         return res.status(401).json({ error: 'Email ou senha inválidos' });
       }
 
-      const accessToken = this.generateAccessToken(user.id, user.email, user.microareas, user.unidades_saude);
+      const accessToken = this.generateAccessToken(user.id, user.email, user.microareas, user.unidades_saude, user.ine);
 
       return res.json({
         accessToken,
@@ -83,6 +84,7 @@ export class ProfessionalAuthController {
           cpf: user.cpf,
           microareas: user.microareas,
           unidades_saude: user.unidades_saude,
+          ine: user.ine,
         },
       });
     } catch (error) {
@@ -91,6 +93,22 @@ export class ProfessionalAuthController {
       }
       console.error('Error logging in professional:', error);
       return res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+
+  async deleteAccount(req: Request, res: Response): Promise<Response> {
+    try {
+      const user = (req as any).user;
+      if (!user || !user.userId) {
+        return res.status(401).json({ error: 'Não autorizado' });
+      }
+
+      await professionalRepository.deleteProfessional(user.userId);
+
+      return res.json({ message: 'Conta e dados deletados com sucesso' });
+    } catch (error) {
+      console.error('Error deleting professional account:', error);
+      return res.status(500).json({ error: 'Erro interno no servidor ao deletar conta' });
     }
   }
 }

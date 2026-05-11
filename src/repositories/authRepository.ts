@@ -44,4 +44,10 @@ export const authRepository = {
   async validatePassword(plainPassword: string, hashedPassword: string) {
     return bcrypt.compare(plainPassword, hashedPassword);
   },
+
+  async deleteUser(userId: string) {
+    return prisma.user.delete({
+      where: { id: userId },
+    });
+  },
 };

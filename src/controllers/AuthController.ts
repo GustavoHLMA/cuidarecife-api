@@ -158,4 +158,21 @@ export class AuthController {
       return res.status(500).json({ error: 'Erro interno no servidor' });
     }
   }
+
+  async deleteAccount(req: Request, res: Response): Promise<Response> {
+    try {
+      // O authMiddleware adiciona o userId no req.user
+      const user = (req as any).user;
+      if (!user || !user.userId) {
+        return res.status(401).json({ error: 'Não autorizado' });
+      }
+
+      await authRepository.deleteUser(user.userId);
+
+      return res.json({ message: 'Conta e dados deletados com sucesso' });
+    } catch (error) {
+      console.error('Error deleting account:', error);
+      return res.status(500).json({ error: 'Erro interno no servidor ao deletar conta' });
+    }
+  }
 }

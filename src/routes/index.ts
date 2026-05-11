@@ -14,6 +14,7 @@ import { maxPageSizeMiddleware } from '../middlewares/maxPageSizeMiddleware';
 const router = Router();
 
 import RiskStratificationRoutes from './RiskStratificationRoutes';
+import RiskPointRoutes from './RiskPointRoutes';
 import FeedbackRoutes from './FeedbackRoutes';
 import MobileFeedbackRoutes from './MobileFeedbackRoutes';
 
@@ -32,6 +33,7 @@ router.route('/').get((_, res) => {
 // maxPageSizeMiddleware(50) impede data dumps via pageSize grande
 // ============================================================
 router.use('/risk-stratification', authMiddleware, professionalAuthMiddleware, maxPageSizeMiddleware(50), RiskStratificationRoutes);
+router.use('/risk-points', authMiddleware, professionalAuthMiddleware, RiskPointRoutes);
 
 // Protected routes (require JWT — any authenticated user)
 router.use('/vision', authMiddleware, VisionRoutes);

@@ -28,7 +28,7 @@ model GlucoseReading {
   measuredAt  DateTime
   mealContext String? // "before" | "after" | null
   userId      String
-  user        User     @relation(fields: [userId], references: [id])
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime @default(now())
 }
 
@@ -38,7 +38,7 @@ model BloodPressureReading {
   diastolic  Int // pressão diastólica (baixa)
   measuredAt DateTime
   userId     String
-  user       User     @relation(fields: [userId], references: [id])
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt  DateTime @default(now())
 }
 
@@ -47,7 +47,7 @@ model Prescription {
   patientName  String?
   returnInDays Int?
   userId       String
-  user         User         @relation(fields: [userId], references: [id])
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   medications  Medication[]
   createdAt    DateTime     @default(now())
   updatedAt    DateTime     @updatedAt
@@ -100,6 +100,7 @@ model Professional {
   password       String
   microareas     String[]
   unidades_saude String[]
+  ine            String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 }
@@ -114,8 +115,21 @@ model Feedback {
 model MobileFeedback {
   id        String   @id @default(cuid())
   rating    Int
-  feature   String   // "OCR" or "CHATBOT" or "CHATBOT_MSG"
-  details   String?  // To store specific context like AI message text
+  feature   String // "OCR" or "CHATBOT" or "CHATBOT_MSG"
+  details   String? // To store specific context like AI message text
   createdAt DateTime @default(now())
 }
 
+// Pontos de risco de acesso demarcados no mapa pelo agente de saúde
+// Exemplos: escadarias, ladeiras, ruas não pavimentadas
+model RiskPoint {
+  id         String   @id @default(cuid())
+  type       String   // "STAIRS" | "SLOPE" | "UNPAVED" | "FLOODING" | "OTHER"
+  label      String?  // Descrição opcional (ex: "Escadaria íngreme da Rua X")
+  lat        Float    // Latitude
+  lng        Float    // Longitude
+  microarea  String?  // Microárea associada
+  createdBy  String?  // ID do profissional que criou
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}

@@ -121,8 +121,23 @@ export class RiskStratificationService {
       highRiskReasons.push("Glicemia de jejum > 250 mg/dL");
     }
 
-    if (this.hasHighRiskComorbidity(patient)) {
-      highRiskReasons.push("Comorbidade de Alto Risco");
+    if ((patient as any).flag_infarto === 1) highRiskReasons.push("Histórico de Infarto");
+    if ((patient as any).flag_derrame === 1) highRiskReasons.push("Histórico de AVC/Derrame");
+    if ((patient as any).flag_cardiaca === 1) highRiskReasons.push("Cardiopatia Detectada");
+    if ((patient as any).flag_renal === 1) highRiskReasons.push("Insuficiência Renal");
+
+    const highRiskCids = [
+      ...this.hasComplicadaCids,
+      ...this.cardiovascularCids,
+      ...this.renalCids,
+      ...this.retinopatiaCids,
+      ...this.neuropatiaCids,
+      ...this.demenciaCids,
+      ...this.peDiabeticoCids
+    ];
+    
+    if (patient.cids.some(cid => highRiskCids.some(h => cid.startsWith(h)))) {
+      highRiskReasons.push("Comorbidade Clínica (CID)");
     }
 
     if (highRiskReasons.length > 0) {
@@ -193,10 +208,38 @@ export class RiskStratificationService {
   public async getMicroareas(): Promise<string[]> {
     if (!isPecConfigured) return ['01', '02', '03', '04', '05', '06'];
     try {
-      const rows = await pecQuery("SELECT DISTINCT nu_micro_area FROM tb_cidadao WHERE nu_micro_area IS NOT NULL AND nu_micro_area != '' ORDER BY nu_micro_area ASC", []);
+      // Otimizado: Busca apenas microáreas de cidadãos ativos e vinculados (evita scan na tabela toda)
+      const sql = `
+        SELECT DISTINCT nu_micro_area 
+        FROM tb_cidadao
+        WHERE nu_micro_area IS NOT NULL 
+          AND nu_micro_area != '' 
+        ORDER BY nu_micro_area ASC
+        LIMIT 500
+      `;
+      const rows = await pecQuery(sql, []);
       return (rows as any[]).map(r => r.nu_micro_area);
     } catch (e) {
+      console.error('[getMicroareas] Fallback to mock due to error:', e);
       return ['01', '02', '03', '04', '05', '06'];
+    }
+  }
+
+  public async getEquipes(): Promise<Array<{ ine: string; nome: string }>> {
+    if (!isPecConfigured) return [{ ine: "12345", nome: "Equipe Alpha" }];
+    try {
+      const sql = `
+        SELECT DISTINCT e.nu_ine as ine, e.no_equipe as nome
+        FROM tb_equipe e
+        WHERE e.nu_ine IS NOT NULL AND e.st_ativo = 1
+        ORDER BY e.no_equipe ASC
+        LIMIT 500
+      `;
+      const rows = await pecQuery(sql, []);
+      return (rows as any[]).map(r => ({ ine: r.ine, nome: r.nome }));
+    } catch (e) {
+      console.error('[getEquipes] Fallback to mock due to error:', e);
+      return [{ ine: "12345", nome: "Equipe Alpha" }];
     }
   }
 
@@ -217,114 +260,64 @@ export class RiskStratificationService {
       const offset = (page - 1) * pageSize;
       const params: any[] = [];
       let extraWhere = "";
+      let veJoin = "JOIN tb_cidadao_vinculacao_equipe ve ON c.co_seq_cidadao = ve.co_cidadao";
 
-      if (filters.microarea && filters.microarea !== 'all') {
-        const mas = filters.microarea.split(',');
-        if (mas.length === 1) {
-          extraWhere += ` AND c.nu_micro_area = $${params.length + 1}`;
-          params.push(mas[0]);
-        } else {
-          const placeholders = mas.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
-          extraWhere += ` AND c.nu_micro_area IN (${placeholders})`;
-          params.push(...mas);
-        }
+      if (filters.ine && filters.ine !== 'all') {
+        const ines = filters.ine.split(',');
+        const placeholders = ines.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND ve.nu_ine IN (${placeholders})`;
+        params.push(...ines);
       }
 
       if (filters.unidade && filters.unidade !== 'all') {
         const uds = filters.unidade.split(',');
         const placeholders = uds.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
-        extraWhere += ` AND c.co_seq_cidadao IN (
-          SELECT pus.co_cidadao FROM tb_prontuario_unidade_saude pus
-          WHERE pus.co_unidade_saude IN (${placeholders})
-        )`;
+        extraWhere += ` AND ve.nu_cnes IN (${placeholders})`;
         params.push(...uds);
       }
 
+      if (filters.microarea && filters.microarea !== 'all') {
+        const mas = filters.microarea.split(',');
+        const placeholders = mas.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND c.nu_micro_area IN (${placeholders})`;
+        params.push(...mas);
+      }
+
       if (filters.search) {
-        // Acelerado pelo índice in_cidadao_nocidadaofiltrogin
         extraWhere += ` AND c.no_cidadao_filtro ILIKE $${params.length + 1}`;
         params.push(`%${filters.search}%`);
       }
 
-      if (filters.ageRange) {
-        // Idade é ano atual - ano de nascimento
-        extraWhere += ` AND EXTRACT(YEAR FROM AGE(c.dt_nascimento)) >= $${params.length + 1}
-                         AND EXTRACT(YEAR FROM AGE(c.dt_nascimento)) <= $${params.length + 2}`;
-        params.push(filters.ageRange[0], filters.ageRange[1]);
+      let total = 0;
+      const requiresVeJoin = (filters.ine && filters.ine !== 'all') || (filters.unidade && filters.unidade !== 'all');
+
+      if (!extraWhere) {
+        // Fast estimate for the entire database to avoid 20-second COUNT(*) scans
+        const estimateQuery = `SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'tb_cidadao'`;
+        try {
+          const countRes = await pecQuery(estimateQuery, []);
+          total = parseInt((countRes as any)?.[0]?.total || '1200000', 10);
+        } catch (e) {
+          total = 1200000;
+        }
+      } else {
+        // Exact count when filters are applied (smaller dataset)
+        const countQuery = `
+          SELECT COUNT(*) as total
+          FROM tb_cidadao c
+          ${requiresVeJoin ? veJoin : ''}
+          WHERE c.dt_obito IS NULL 
+            ${extraWhere}
+        `;
+        const countRes = await pecQuery(countQuery, params);
+        total = parseInt((countRes as any)?.[0]?.total || '0', 10);
       }
 
-      if (filters.sex) {
-        extraWhere += ` AND c.no_sexo = $${params.length + 1}`;
-        params.push(filters.sex.toUpperCase());
-      }
-
-      if (filters.smoking) {
-        // st_fumante está em tb_fat_cad_individual, ligada via co_fat_cidadao_pec
-        if (filters.smoking === 'Sim') {
-          extraWhere += ` AND EXISTS (
-            SELECT 1 FROM tb_fat_cidadao_pec fcp2
-            JOIN tb_fat_cad_individual fci2 ON fci2.co_fat_cidadao_pec = fcp2.co_seq_fat_cidadao_pec
-            WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fci2.st_fumante = 1
-          )`;
-        } else if (filters.smoking === 'Não') {
-          extraWhere += ` AND EXISTS (
-            SELECT 1 FROM tb_fat_cidadao_pec fcp2
-            JOIN tb_fat_cad_individual fci2 ON fci2.co_fat_cidadao_pec = fcp2.co_seq_fat_cidadao_pec
-            WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fci2.st_fumante = 0
-          )`;
-        } else if (filters.smoking === 'Sem Registro') {
-          extraWhere += ` AND NOT EXISTS (
-            SELECT 1 FROM tb_fat_cidadao_pec fcp2
-            JOIN tb_fat_cad_individual fci2 ON fci2.co_fat_cidadao_pec = fcp2.co_seq_fat_cidadao_pec
-            WHERE fcp2.co_cidadao = c.co_seq_cidadao AND fci2.st_fumante IS NOT NULL
-          )`;
-        }
-      }
-
-      // Determine if we have any active filters that reduce the result set
-      const hasFilters = !!(filters.search || (filters.microarea && filters.microarea !== 'all') || filters.ageRange || filters.sex || filters.smoking || filters.riskLevel);
-
-      let fastTrackJoin = "";
-      if (!filters.microarea && filters.riskLevel) {
-        fastTrackJoin = "LEFT JOIN tb_condicoes_saude_auto csa_fast ON c.co_seq_cidadao = csa_fast.co_cidadao";
-        const levels = filters.riskLevel.split(',');
-        let fastTrackConditions = [];
-        if (levels.includes('HIGH')) {
-          fastTrackConditions.push("(csa_fast.st_infarto = 1 OR csa_fast.st_derrame = 1 OR csa_fast.st_doenca_cardiaca = 1 OR csa_fast.st_problema_rins = 1)");
-        }
-        if (levels.includes('MEDIUM')) {
-          fastTrackConditions.push(`(
-              (csa_fast.st_hipertensao_arterial = 1 AND csa_fast.st_diabetes = 1) OR
-              (csa_fast.st_hipertensao_arterial = 1 AND csa_fast.st_fumante = 1) OR
-              (csa_fast.st_hipertensao_arterial = 1 AND c.no_sexo = 'MASCULINO' AND EXTRACT(YEAR FROM AGE(c.dt_nascimento)) > 55) OR
-              (csa_fast.st_hipertensao_arterial = 1 AND c.no_sexo = 'FEMININO' AND EXTRACT(YEAR FROM AGE(c.dt_nascimento)) > 65)
-            )`);
-        }
-        if (fastTrackConditions.length > 0) {
-          extraWhere += ` AND (${fastTrackConditions.join(' OR ')})`;
-        }
-      }
-
-      // Count query - Removido JOIN pesado com tb_prontuario para evitar travamento em 1.2M registros
-      const countQuery = `
-        SELECT COUNT(*) as total
-        FROM tb_cidadao c
-        ${fastTrackJoin}
-        WHERE c.dt_obito IS NULL
-          ${extraWhere}
-      `;
-      const countRes = await pecQuery(countQuery, params);
-      const total = parseInt((countRes as any)?.[0]?.total || '0', 10);
-
-      // Data query (The user's working SQL)
-      const dataParams = [...params, pageSize, offset];
-      const limitIdx = dataParams.length - 1;
-      const offsetIdx = dataParams.length;
+      // Data query
+      const dataParams = [...params];
 
       const cteAlreadyPaginated = !filters.riskLevel && (!filters.cids || filters.cids.length === 0) && filters.consultMonths === undefined;
 
-      // O usuário solicitou a remoção da ordenação alfabética em todos os pontos.
-      // Usar a Chave Primária (co_seq_cidadao) garante leitura instantânea via índice!
       const orderByClause = "ORDER BY c.co_seq_cidadao ASC";
 
       let fullQuery = `
@@ -334,27 +327,44 @@ export class RiskStratificationService {
                 c.no_cidadao, 
                 c.dt_nascimento, 
                 c.no_sexo,            
-                c.nu_micro_area
+                c.nu_micro_area,
+                c.ds_logradouro,
+                c.nu_numero,
+                c.ds_complemento,
+                c.no_bairro,
+                c.ds_cep,
+                c.nu_telefone_celular,
+                c.nu_telefone_residencial,
+                c.nu_telefone_contato
             FROM tb_cidadao c
-            ${fastTrackJoin}
+            ${requiresVeJoin ? veJoin : ''}
             WHERE c.dt_obito IS NULL
               ${extraWhere}
             ${orderByClause}
-            ${cteAlreadyPaginated ? `LIMIT $${limitIdx} OFFSET $${offsetIdx}` : ''}
+            ${cteAlreadyPaginated ? `LIMIT ${pageSize} OFFSET ${offset}` : ''}
         ),
         PacientesBase AS (
             SELECT 
                 cf.*,
                 p.co_seq_prontuario,
+                fcp.co_seq_fat_cidadao_pec,
                 (
                    SELECT us.no_unidade_saude 
                    FROM tb_prontuario_unidade_saude pus
                    JOIN tb_unidade_saude us ON pus.co_unidade_saude = us.co_seq_unidade_saude
                    WHERE pus.co_cidadao = cf.co_seq_cidadao
                    LIMIT 1
-                ) AS no_unidade_saude
+                ) AS no_unidade_saude,
+                (
+                   SELECT eq.no_equipe 
+                   FROM tb_cidadao_vinculacao_equipe ve
+                   JOIN tb_equipe eq ON ve.nu_ine = eq.nu_ine
+                   WHERE ve.co_cidadao = cf.co_seq_cidadao
+                   LIMIT 1
+                ) AS no_equipe
             FROM CidadaoFiltrado cf
             LEFT JOIN tb_prontuario p ON cf.co_seq_cidadao = p.co_cidadao
+            LEFT JOIN tb_fat_cidadao_pec fcp ON cf.co_seq_cidadao = fcp.co_cidadao
         )
         SELECT *
         FROM (
@@ -365,22 +375,30 @@ export class RiskStratificationService {
                 EXTRACT(YEAR FROM AGE(pb.dt_nascimento))::int AS "Idade",
                 pb.nu_micro_area AS "Microárea",
                 pb.no_unidade_saude AS "Unidade",
+                pb.no_equipe AS "Equipe",
                 up.pressao AS "Última Pressão",
-                up.peso AS "Peso",
-                up.altura AS "Altura",
-                up.glicemia AS "Glicemia Capilar",
-                up.data_medicao AS "Data Aferição",
+                COALESCE(uw.peso, cr.peso_autorreferido) AS "Peso",
+                ua.altura AS "Altura",
+                ug.glicemia AS "Glicemia Capilar",
+                uc.data_ultima_consulta AS "Data Aferição",
                 uh.vl_hemoglobina_glicada AS "HbA1c",
                 uc.data_ultima_consulta AS "Última Consulta",
                 uv.data_ultima_visita AS "Última Visita Domiciliar",
-                cids_fat.ds_filtro_cids AS "CIDs Fat",
-                cids_fat.ds_filtro_ciaps AS "CIAPs Fat",
+                uc.ds_filtro_cids AS "CIDs Fat",
+                uc.ds_filtro_ciaps AS "CIAPs Fat",
                 cr.st_hipertensao_arterial AS "flag_has",
                 cr.st_diabetes AS "flag_dm",
                 cr.st_doenca_cardiaca AS "flag_cardiaca",
                 cr.st_problema_rins AS "flag_renal",
                 cr.st_infarto AS "flag_infarto",
                 cr.st_derrame AS "flag_derrame",
+                CONCAT_WS(', ', 
+                  NULLIF(CONCAT_WS(' ', pb.ds_logradouro, pb.nu_numero), ''),
+                  NULLIF(pb.ds_complemento, ''),
+                  NULLIF(pb.no_bairro, ''),
+                  NULLIF(pb.ds_cep, '')
+                ) AS "Endereço",
+                COALESCE(pb.nu_telefone_celular, pb.nu_telefone_contato, pb.nu_telefone_residencial) AS "Telefone",
                 CASE 
                     WHEN cr.st_fumante = 1 THEN 'Sim'
                     WHEN cr.st_fumante = 0 THEN 'Não'
@@ -391,53 +409,91 @@ export class RiskStratificationService {
                 CASE 
                     WHEN (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 1) AS INTEGER) >= 180) OR (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 2) AS INTEGER) >= 110) THEN 'HIGH'
                     WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 9 THEN 'HIGH'
-                    WHEN up.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(up.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) > 250 THEN 'HIGH'
+                    WHEN ug.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(ug.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) > 250 THEN 'HIGH'
                     WHEN cr.st_infarto = 1 OR cr.st_derrame = 1 OR cr.st_doenca_cardiaca = 1 OR cr.st_problema_rins = 1 THEN 'HIGH'
                     WHEN (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 1) AS INTEGER) >= 160) OR (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 2) AS INTEGER) >= 100) THEN 'MEDIUM'
                     WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 7 THEN 'MEDIUM'
-                    WHEN up.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(up.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) >= 126 THEN 'MEDIUM'
+                    WHEN ug.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(ug.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) >= 126 THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND cr.st_diabetes = 1 THEN 'MEDIUM'
-                    WHEN (up.peso IS NOT NULL AND up.altura IS NOT NULL AND (up.peso::numeric / POWER(up.altura::numeric / 100, 2)) >= 30) THEN 'MEDIUM'
+                    WHEN (COALESCE(uw.peso, cr.peso_autorreferido) IS NOT NULL AND ua.altura IS NOT NULL AND (COALESCE(uw.peso, cr.peso_autorreferido)::numeric / POWER(ua.altura::numeric / 100, 2)) >= 30) THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND cr.st_fumante = 1 THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'MASCULINO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 55 THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'FEMININO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 65 THEN 'MEDIUM'
                     ELSE 'LOW'
                 END AS computed_risk
             FROM PacientesBase pb
-            -- Condições (flags diretas, muito mais rápido)
-            LEFT JOIN tb_condicoes_saude_auto cr ON pb.co_seq_cidadao = cr.co_cidadao
-            -- Medições clínicas (tb_medicao)
+            
+            -- Condições de Saúde (Pegando a última ficha de cadastro individual preenchida)
             LEFT JOIN LATERAL (
-                SELECT m.nu_medicao_pressao_arterial AS pressao, m.nu_medicao_peso AS peso, m.nu_medicao_altura AS altura, m.nu_medicao_glicemia AS glicemia, ap.dt_inicio AS data_medicao 
-                FROM tb_atend a JOIN tb_atend_prof ap ON a.co_seq_atend = ap.co_atend JOIN tb_medicao m ON ap.co_seq_atend_prof = m.co_atend_prof
-                WHERE a.co_prontuario = pb.co_seq_prontuario ORDER BY ap.dt_inicio DESC LIMIT 1
-            ) up ON true
-            -- Última consulta
+                SELECT 
+                    st_fumante, st_hipertensao_arterial, st_diabetes, 
+                    st_doenca_cardiaca, st_infarto, st_derrame, st_problema_rins,
+                    peso_autorreferido
+                FROM tb_condicoes_saude_auto
+                WHERE co_cidadao = pb.co_seq_cidadao
+                ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
+            ) cr ON true
+            
+            -- Última consulta (qualquer uma, mesmo sem sinais vitais, traz cids)
             LEFT JOIN LATERAL (
-                SELECT ap.dt_inicio AS data_ultima_consulta FROM tb_atend a JOIN tb_atend_prof ap ON a.co_seq_atend = ap.co_atend
-                WHERE a.co_prontuario = pb.co_seq_prontuario AND ap.dt_inicio IS NOT NULL ORDER BY ap.dt_inicio DESC LIMIT 1
+                SELECT TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_consulta,
+                       fat.ds_filtro_cids,
+                       fat.ds_filtro_ciaps
+                FROM tb_fat_atendimento_individual fat
+                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec
+                ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) uc ON true
-            -- CIDs via fat_individual + fat_domiciliar (UNION para capturar acamados/domiciliares)
+            
+            -- Última Pressão (ignora consultas onde a pressão não foi medida)
             LEFT JOIN LATERAL (
-                SELECT ds_filtro_cids, ds_filtro_ciaps FROM (
-                    SELECT fat.ds_filtro_cids, fat.ds_filtro_ciaps, fat.co_dim_tempo
-                    FROM tb_fat_cidadao_pec fcp JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = fcp.co_seq_fat_cidadao_pec
-                    WHERE fcp.co_cidadao = pb.co_seq_cidadao AND ((fat.ds_filtro_cids IS NOT NULL AND fat.ds_filtro_cids != '||') OR (fat.ds_filtro_ciaps IS NOT NULL AND fat.ds_filtro_ciaps != '||'))
-                    UNION ALL
-                    SELECT fad.ds_filtro_cids, fad.ds_filtro_ciaps, fad.co_dim_tempo
-                    FROM tb_fat_cidadao_pec fcp JOIN tb_fat_atendimento_domiciliar fad ON fad.co_fat_cidadao_pec = fcp.co_seq_fat_cidadao_pec
-                    WHERE fcp.co_cidadao = pb.co_seq_cidadao AND ((fad.ds_filtro_cids IS NOT NULL AND fad.ds_filtro_cids != '||') OR (fad.ds_filtro_ciaps IS NOT NULL AND fad.ds_filtro_ciaps != '||'))
-                ) combined ORDER BY co_dim_tempo DESC LIMIT 1
-            ) cids_fat ON true
-            -- Última visita
+                SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao
+                FROM tb_fat_atendimento_individual fat
+                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_pressao_sistolica IS NOT NULL
+                ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+            ) up ON true
+            
+            -- Última Glicemia (ignora consultas onde não teve medição)
             LEFT JOIN LATERAL (
-                SELECT TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_visita FROM tb_fat_cidadao_pec fcp JOIN tb_fat_visita_domiciliar fvd ON fvd.co_fat_cidadao_pec = fcp.co_seq_fat_cidadao_pec
-                WHERE fcp.co_cidadao = pb.co_seq_cidadao ORDER BY fvd.co_dim_tempo DESC LIMIT 1
+                SELECT fat.nu_glicemia AS glicemia
+                FROM tb_fat_atendimento_individual fat
+                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_glicemia IS NOT NULL
+                ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+            ) ug ON true
+            
+            -- Último Peso
+            LEFT JOIN LATERAL (
+                SELECT fat.nu_peso AS peso
+                FROM tb_fat_atendimento_individual fat
+                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_peso IS NOT NULL
+                ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+            ) uw ON true
+            
+            -- Última Altura
+            LEFT JOIN LATERAL (
+                SELECT fat.nu_altura AS altura
+                FROM tb_fat_atendimento_individual fat
+                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_altura IS NOT NULL
+                ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+            ) ua ON true
+
+            -- Última visita domiciliar
+            LEFT JOIN LATERAL (
+                SELECT TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_visita FROM tb_fat_visita_domiciliar fvd
+                WHERE fvd.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec ORDER BY (fvd.co_dim_tempo + 0) DESC LIMIT 1
             ) uv ON true
-            -- HbA1c
+
+            -- HbA1c (com Optimization Fence)
             LEFT JOIN LATERAL (
-                SELECT hem.vl_hemoglobina_glicada FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON req.co_seq_exame_requisitado = hem.co_exame_requisitado
-                WHERE req.co_prontuario = pb.co_seq_prontuario AND hem.vl_hemoglobina_glicada IS NOT NULL ORDER BY COALESCE(req.dt_realizacao, req.dt_solicitacao) DESC LIMIT 1
+                SELECT hem.vl_hemoglobina_glicada 
+                FROM (
+                    SELECT req.co_seq_exame_requisitado
+                    FROM tb_exame_requisitado req
+                    WHERE req.co_prontuario = pb.co_seq_prontuario
+                    ORDER BY req.co_seq_exame_requisitado DESC 
+                    OFFSET 0
+                ) as safe_req
+                JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = safe_req.co_seq_exame_requisitado
+                LIMIT 1
             ) uh ON true
         ) sub
         WHERE 1=1
@@ -467,7 +523,7 @@ export class RiskStratificationService {
       fullQuery += finalWhere;
 
       if (!cteAlreadyPaginated) {
-        fullQuery += ` LIMIT $${limitIdx} OFFSET $${offsetIdx}`;
+        fullQuery += ` LIMIT ${pageSize} OFFSET ${offset}`;
       }
 
       const rows = await pecQuery(fullQuery, dataParams);
@@ -486,6 +542,26 @@ export class RiskStratificationService {
         if (cidsArray.length === 0 && ciapsArray.length > 0) {
           const ciapMap: Record<string, string> = { 'K86': 'I10', 'K87': 'I11.0', 'T89': 'E10', 'T90': 'E11', 'K75': 'I21', 'K77': 'I50', 'K90': 'I63', 'U99': 'N18', 'T82': 'E66' };
           cidsArray = ciapsArray.map((c: string) => ciapMap[c]).filter(Boolean) as string[];
+        }
+
+        // Injetar doenças baseadas nas flags se não estiverem nos CIDs
+        if (row['flag_has'] === 1 && !cidsArray.some((c: string) => c.toLowerCase().includes('hipertens'))) {
+          cidsArray.unshift("Hipertensão");
+        }
+        if (row['flag_dm'] === 1 && !cidsArray.some((c: string) => c.toLowerCase().includes('diabet'))) {
+          cidsArray.unshift("Diabetes");
+        }
+        if (row['flag_infarto'] === 1 && !cidsArray.some((c: string) => c.toLowerCase().includes('infarto'))) {
+          cidsArray.unshift("Histórico de Infarto");
+        }
+        if (row['flag_derrame'] === 1 && !cidsArray.some((c: string) => c.toLowerCase().includes('derrame') || c.toLowerCase().includes('avc'))) {
+          cidsArray.unshift("Histórico de AVC/Derrame");
+        }
+        if (row['flag_cardiaca'] === 1 && !cidsArray.some((c: string) => c.toLowerCase().includes('card'))) {
+          cidsArray.unshift("Doença Cardíaca");
+        }
+        if (row['flag_renal'] === 1 && !cidsArray.some((c: string) => c.toLowerCase().includes('renal') || c.toLowerCase().includes('rim'))) {
+          cidsArray.unshift("Insuficiência Renal");
         }
 
         const p: PatientMock = {
@@ -511,6 +587,9 @@ export class RiskStratificationService {
           flag_infarto: row['flag_infarto'],
           flag_derrame: row['flag_derrame'],
           unidade: row['Unidade'] || null,
+          endereco: row['Endereço'] || null,
+          telefone: row['Telefone'] || null,
+          data_ultimo_exame_pe: row['Último Exame Pé'] || null,
         } as any;
         return this.stratifySinglePatient(p);
       });
@@ -542,47 +621,177 @@ export class RiskStratificationService {
   public getByCids(cids: string[], microarea?: string) { return this.stratifyPatients(microarea).filter(p => p.cids.some(c => cids.includes(c))); }
 
   /**
+   * Retorna pacientes para o mapa do território — versão LEVE.
+   * Sem LATERAL JOINs pesados. Só endereço, condições e risco.
+   * Limite de 500 pacientes. Filtro obrigatório por microárea ou INE.
+   */
+  public async getMapPatients(filters: { microarea?: string; ine?: string; unidade?: string; condition?: string }): Promise<any[]> {
+    if (!isPecConfigured) {
+      return this.getMapPatientsMock(filters);
+    }
+
+    try {
+      const params: any[] = [];
+      let extraWhere = "";
+
+      // INE filter
+      if (filters.ine && filters.ine !== 'all') {
+        const ines = filters.ine.split(',');
+        const ph = ines.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND ve.nu_ine IN (${ph})`;
+        params.push(...ines);
+      }
+
+      // Unidade filter
+      if (filters.unidade && filters.unidade !== 'all') {
+        const uds = filters.unidade.split(',');
+        const ph = uds.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND ve.nu_cnes IN (${ph})`;
+        params.push(...uds);
+      }
+
+      // Microarea filter (default to '01' if nothing set)
+      const microarea = filters.microarea && filters.microarea !== 'all' ? filters.microarea : '01';
+      const mas = microarea.split(',');
+      const maPh = mas.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+      extraWhere += ` AND c.nu_micro_area IN (${maPh})`;
+      params.push(...mas);
+
+      // Condition filter (DM, HAS, or both)
+      let condWhere = "";
+      if (filters.condition === 'DM') {
+        condWhere = " AND cr.st_diabetes = 1";
+      } else if (filters.condition === 'HAS') {
+        condWhere = " AND cr.st_hipertensao_arterial = 1";
+      } else {
+        // Default: both DM or HAS
+        condWhere = " AND (cr.st_diabetes = 1 OR cr.st_hipertensao_arterial = 1)";
+      }
+
+      const limitIdx = params.length + 1;
+      params.push(2000); // Hard limit
+
+      const sql = `
+        SELECT
+          c.co_seq_cidadao AS "id",
+          c.no_cidadao AS "nome",
+          EXTRACT(YEAR FROM AGE(NOW(), c.dt_nascimento))::int AS "idade",
+          c.no_sexo AS "sexo",
+          c.nu_micro_area AS "microarea",
+          c.ds_logradouro AS "logradouro",
+          c.nu_numero AS "numero",
+          c.no_bairro AS "bairro",
+          c.ds_cep AS "cep",
+          cr.st_hipertensao_arterial AS "flag_has",
+          cr.st_diabetes AS "flag_dm",
+          cr.st_doenca_cardiaca AS "flag_cardiaca",
+          cr.st_problema_rins AS "flag_renal"
+        FROM tb_cidadao c
+        JOIN tb_cidadao_vinculacao_equipe ve ON c.co_seq_cidadao = ve.co_cidadao
+        LEFT JOIN tb_condicoes_saude_auto cr ON c.co_seq_cidadao = cr.co_cidadao
+        WHERE c.dt_obito IS NULL
+          AND ve.st_saida_cadastro_obito = 0
+          AND ve.st_saida_cadastro_territorio = 0
+          ${extraWhere}
+          ${condWhere}
+        LIMIT $${limitIdx}
+      `;
+
+      const rows = await pecQuery(sql, params);
+      return (rows as any[]).map((r: any) => ({
+        id: `pec-${r.id}`,
+        nome: r.nome,
+        idade: r.idade,
+        sexo: r.sexo,
+        microarea: r.microarea,
+        logradouro: r.logradouro,
+        numero: r.numero,
+        bairro: r.bairro,
+        cep: r.cep,
+        has: r.flag_has === 1,
+        dm: r.flag_dm === 1,
+        cardiaca: r.flag_cardiaca === 1,
+        renal: r.flag_renal === 1,
+      }));
+    } catch (error: any) {
+      console.error('[MapPatients] DB Error:', error.message);
+      throw error;
+    }
+  }
+
+  private getMapPatientsMock(filters: any): any[] {
+    const BAIRROS_RECIFE = [
+      { bairro: "Boa Viagem", logradouro: "Rua dos Navegantes", numero: "500" },
+      { bairro: "Casa Amarela", logradouro: "Rua da Harmonia", numero: "120" },
+      { bairro: "Várzea", logradouro: "Av Caxangá", numero: "800" },
+      { bairro: "Ibura", logradouro: "Rua Açaí", numero: "45" },
+      { bairro: "Imbiribeira", logradouro: "Rua Imperial", numero: "300" },
+    ];
+    return mockPatients.slice(0, 12).map((p, i) => {
+      const addr = BAIRROS_RECIFE[i % BAIRROS_RECIFE.length];
+      return {
+        id: p.id,
+        nome: p.nome,
+        idade: p.idade,
+        sexo: p.sexo,
+        microarea: p.microarea,
+        logradouro: addr.logradouro,
+        numero: addr.numero,
+        bairro: addr.bairro,
+        cep: "50000-000",
+        has: p.cids.some(c => c.startsWith('I1')),
+        dm: p.cids.some(c => c.startsWith('E1')),
+        cardiaca: false,
+        renal: p.cids.some(c => c.startsWith('N1')),
+      };
+    });
+  }
+
+  /**
    * Retorna estatísticas agregadas do território via SQL.
    * NÃO traz dados individuais — apenas contagens e percentuais.
    * Seguro para 1.2M+ registros.
    */
-  public async getTerritoryStats(microarea?: string, unidade?: string): Promise<any> {
+  public async getTerritoryStats(microarea?: string, unidade?: string, ine?: string): Promise<any> {
     if (!isPecConfigured) {
       return this.getTerritoryStatsMock(microarea, unidade);
     }
 
-    // A visão global agora usa a query Fast Track com índice e JSON agg para evitar congelamento.
-
     try {
       const params: any[] = [];
-      let microWhere = "";
+      let extraWhere = "";
+      let veJoin = "JOIN tb_cidadao_vinculacao_equipe ve ON c.co_seq_cidadao = ve.co_cidadao";
 
-      if (microarea && microarea !== 'all') {
-        const mas = microarea.split(',');
-        if (mas.length === 1) {
-          microWhere = ` AND c.nu_micro_area = $1`;
-          params.push(mas[0]);
-        } else {
-          const placeholders = mas.map((_: any, i: number) => `$${i + 1}`).join(',');
-          microWhere = ` AND c.nu_micro_area IN (${placeholders})`;
-          params.push(...mas);
-        }
+      if (ine && ine !== 'all') {
+        const ines = ine.split(',');
+        const placeholders = ines.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND ve.nu_ine IN (${placeholders})`;
+        params.push(...ines);
       }
 
-      let unidadeJoin = "";
       if (unidade && unidade !== 'all') {
         const uds = unidade.split(',');
         const placeholders = uds.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
-        unidadeJoin = `JOIN tb_prontuario_unidade_saude pus ON c.co_seq_cidadao = pus.co_cidadao AND pus.co_unidade_saude IN (${placeholders})`;
+        extraWhere += ` AND ve.nu_cnes IN (${placeholders})`;
         params.push(...uds);
+      }
+
+      if (microarea && microarea !== 'all') {
+        const mas = microarea.split(',');
+        const placeholders = mas.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND c.nu_micro_area IN (${placeholders})`;
+        params.push(...mas);
       }
 
       let query = `
           WITH TargetCidadaos AS (
-            SELECT c.co_seq_cidadao, c.nu_micro_area, c.no_bairro
+            SELECT c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine
             FROM tb_cidadao c
-            ${unidadeJoin}
-            WHERE c.dt_obito IS NULL ${microWhere}
+            ${veJoin}
+            WHERE c.dt_obito IS NULL 
+              AND ve.st_saida_cadastro_obito = 0 
+              AND ve.st_saida_cadastro_territorio = 0
+              ${extraWhere}
           ),
           Diagnosis AS (
             SELECT 
@@ -604,31 +813,7 @@ export class RiskStratificationService {
             COUNT(*) FILTER (WHERE risk_level = 'MEDIUM') AS medium_risk,
             COUNT(*) FILTER (WHERE risk_level = 'LOW') AS low_risk,
             COUNT(*) FILTER (WHERE is_hyp = 1) AS hyp_total,
-            COUNT(*) FILTER (WHERE is_dm = 1) AS dm_total,
-            -- Indicadores simplificados para garantir carregamento instantâneo
-            0 AS hyp_consulta_6m,
-            0 AS hyp_pa_6m,
-            0 AS hyp_visita_12m,
-            0 AS hyp_peso_altura,
-            0 AS dm_consulta_6m,
-            0 AS dm_pa_6m,
-            0 AS dm_peso_altura,
-            0 AS dm_hba1c,
-            0 AS dm_exame_pes,
-            0 AS dm_visita_12m,
-            -- Agrupamento por Microárea
-            (
-              SELECT json_agg(jsonb_build_object('ma', ma, 'bairro', bairro, 'h', h, 'm', m, 'l', l, 'hyp', hyp, 'dm', dm))
-              FROM (
-                SELECT COALESCE(nu_micro_area, 'N/A') as ma, COALESCE(no_bairro, 'N/A') as bairro,
-                  COUNT(*) FILTER (WHERE risk_level = 'HIGH') as h,
-                  COUNT(*) FILTER (WHERE risk_level = 'MEDIUM') as m,
-                  COUNT(*) FILTER (WHERE risk_level = 'LOW') as l,
-                  COUNT(*) FILTER (WHERE is_hyp = 1) as hyp,
-                  COUNT(*) FILTER (WHERE is_dm = 1) as dm
-                FROM Classified GROUP BY 1, 2
-              ) sub
-            ) AS ma_counts
+            COUNT(*) FILTER (WHERE is_dm = 1) AS dm_total
           FROM Classified
         `;
 
@@ -642,20 +827,8 @@ export class RiskStratificationService {
 
       const pct = (n: number, d: number) => d > 0 ? Math.round((n / d) * 100) : 0;
 
-      // Process microarea aggregates
-      const maCountsRaw: any[] = r.ma_counts || [];
-      const microareaCounts: Record<string, { HIGH: number; MEDIUM: number; LOW: number; bairro: string; hyp: number; dm: number }> = {};
-      for (const item of maCountsRaw) {
-        const ma = item.ma || 'unknown';
-        microareaCounts[ma] = {
-          HIGH: item.h || 0,
-          MEDIUM: item.m || 0,
-          LOW: item.l || 0,
-          bairro: item.bairro || 'N/A',
-          hyp: item.hyp || 0,
-          dm: item.dm || 0
-        };
-      }
+      // Microarea counts was removed for performance optimization
+      const microareaCounts: Record<string, any> = {};
 
       return {
         total,

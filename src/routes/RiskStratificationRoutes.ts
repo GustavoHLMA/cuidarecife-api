@@ -19,6 +19,8 @@ router.get('/needing-active-search', riskController.getNeedingActiveSearch);
 
 router.get('/by-cids', riskController.getByCids);
 router.get('/microareas', riskController.getMicroareas);
+router.get('/equipes', riskController.getEquipes);
 router.get('/territory-stats', riskController.getTerritoryStats);
+router.get('/map-patients', riskController.getMapPatients);
 
 export default router;

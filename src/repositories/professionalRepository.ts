@@ -36,4 +36,10 @@ export const professionalRepository = {
   async validatePassword(plain: string, hashed: string): Promise<boolean> {
     return bcrypt.compare(plain, hashed);
   },
+
+  async deleteProfessional(id: string): Promise<Professional> {
+    return prisma.professional.delete({
+      where: { id },
+    });
+  },
 };

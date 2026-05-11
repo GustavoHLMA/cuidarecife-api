@@ -51,14 +51,21 @@ const authLimiter = rateLimit({
 });
 app.use('/auth', authLimiter);
 
-// SEGURANÇA: body limit reduzido de 50mb para 5mb (previne DoS por payload)
-app.use(express.json({ limit: '5mb' }));
+// Body limit: 15mb (folga para imagens de OCR em alta qualidade)
+app.use(express.json({ limit: '15mb' }));
 app.use(router);
 
 Sentry.setupExpressErrorHandler(app);
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
   console.error('[Error]', err);
+  
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({
+      error: 'A foto enviada é muito pesada para o Doc ler. Tente afastar um pouquinho o celular ou enviar uma imagem mais leve.',
+    });
+  }
+
   res.status(500).json({
     error: 'Internal server error',
     sentryId: (res as any).sentry

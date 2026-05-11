@@ -24,8 +24,8 @@ if (isPecConfigured) {
     user: process.env.USUARIO_PEC,
     password: process.env.SENHA_PEC,
     max: 15,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 30000,
+    idleTimeoutMillis: 60000,
+    connectionTimeoutMillis: 60000,
   });
 
   // SEGURANÇA: Configura CADA conexão como somente leitura + schema correto
@@ -64,7 +64,7 @@ export async function pecQuery<T = any>(text: string, params?: any[]): Promise<T
     throw new Error('Apenas consultas SELECT são permitidas no banco PEC');
   }
 
-  let retries = 2;
+  let retries = 3; // Aumentado para 3 tentativas
   while (retries >= 0) {
     try {
       const start = Date.now();
@@ -76,14 +76,22 @@ export async function pecQuery<T = any>(text: string, params?: any[]): Promise<T
       
       return result.rows as T[];
     } catch (error: any) {
-      if (retries === 0 || (!error.message?.includes('ETIMEDOUT') && !error.message?.includes('timeout'))) {
-        console.error('[PEC DB] Query error:', error.message);
+      const isTransient = 
+        error.message?.includes('ETIMEDOUT') || 
+        error.message?.includes('timeout') || 
+        error.message?.includes('ECONNRESET') || 
+        error.message?.includes('terminated unexpectedly') ||
+        error.message?.includes('Connection terminated');
+
+      if (retries === 0 || !isTransient) {
+        console.error('[PEC DB] Query fatal error:', error.message);
         throw error;
       }
-      console.warn(`[PEC DB] Query timeout (${error.message}). Retrying... (${retries} attempts left)`);
+      
+      console.warn(`[PEC DB] Erro de conexão (${error.message}). Tentando novamente... (${retries} tentativas restantes)`);
       retries--;
-      // Small delay before retrying
-      await new Promise(r => setTimeout(r, 1000));
+      // Delay progressivo: 1s, 2s, 3s...
+      await new Promise(r => setTimeout(r, (3 - retries) * 1000));
     }
   }
   return null;
