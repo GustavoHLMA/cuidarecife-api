@@ -208,17 +208,21 @@ export class RiskStratificationService {
   public async getMicroareas(): Promise<string[]> {
     if (!isPecConfigured) return ['01', '02', '03', '04', '05', '06'];
     try {
-      // Otimizado: Busca apenas microáreas de cidadãos ativos e vinculados (evita scan na tabela toda)
+      // Normaliza microáreas: 0, 00, 001, 01, 1 → tudo vira '01'
       const sql = `
-        SELECT DISTINCT nu_micro_area 
+        SELECT DISTINCT 
+          CASE 
+            WHEN nu_micro_area ~ '^[0-9]+$' THEN LPAD(LTRIM(nu_micro_area, '0'), 2, '0')
+            ELSE nu_micro_area
+          END AS nu_micro_area_norm
         FROM tb_cidadao
         WHERE nu_micro_area IS NOT NULL 
           AND nu_micro_area != '' 
-        ORDER BY nu_micro_area ASC
+        ORDER BY nu_micro_area_norm ASC
         LIMIT 500
       `;
       const rows = await pecQuery(sql, []);
-      return (rows as any[]).map(r => r.nu_micro_area);
+      return (rows as any[]).map(r => r.nu_micro_area_norm).filter((v: string) => v !== '00');
     } catch (e) {
       console.error('[getMicroareas] Fallback to mock due to error:', e);
       return ['01', '02', '03', '04', '05', '06'];
@@ -291,7 +295,99 @@ export class RiskStratificationService {
       let total = 0;
       const requiresVeJoin = (filters.ine && filters.ine !== 'all') || (filters.unidade && filters.unidade !== 'all');
 
-      if (!extraWhere) {
+      const hasDynamicFilters = filters.riskLevel || (filters.cids && filters.cids.length > 0) || (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths));
+
+      if (hasDynamicFilters && extraWhere) {
+        // Precise count on filtered dataset with dynamic sub-queries
+        const countParams = [...params];
+        let dynamicCountQuery = `
+          WITH CidadaoFiltrado AS (
+              SELECT c.co_seq_cidadao, c.no_sexo, c.dt_nascimento,
+                     (SELECT fp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fp WHERE fp.co_cidadao = c.co_seq_cidadao LIMIT 1) AS co_seq_fat_cidadao_pec
+              FROM tb_cidadao c
+              ${requiresVeJoin ? veJoin : ''}
+              WHERE c.dt_obito IS NULL 
+                ${extraWhere}
+          ),
+          PacientesBase AS (
+              SELECT cf.co_seq_cidadao, cf.co_seq_fat_cidadao_pec, p.co_seq_prontuario, cf.no_sexo, cf.dt_nascimento
+              FROM CidadaoFiltrado cf
+              LEFT JOIN tb_prontuario p ON cf.co_seq_cidadao = p.co_cidadao
+          ),
+          ComputedPatients AS (
+              SELECT 
+                  CASE 
+                      WHEN (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 1) AS INTEGER) >= 180) OR (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 2) AS INTEGER) >= 110) THEN 'HIGH'
+                      WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 9 THEN 'HIGH'
+                      WHEN ug.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(ug.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) > 250 THEN 'HIGH'
+                      WHEN cr.st_infarto = 1 OR cr.st_derrame = 1 OR cr.st_doenca_cardiaca = 1 OR cr.st_problema_rins = 1 THEN 'HIGH'
+                      WHEN (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 1) AS INTEGER) >= 160) OR (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 2) AS INTEGER) >= 100) THEN 'MEDIUM'
+                      WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 7 THEN 'MEDIUM'
+                      WHEN ug.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(ug.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) >= 126 THEN 'MEDIUM'
+                      WHEN cr.st_hipertensao_arterial = 1 AND cr.st_diabetes = 1 THEN 'MEDIUM'
+                      WHEN (COALESCE(uw.peso, cr.peso_autorreferido) IS NOT NULL AND ua.altura IS NOT NULL AND ua.altura > 0 AND (COALESCE(uw.peso, cr.peso_autorreferido)::numeric / POWER(ua.altura::numeric / 100, 2)) >= 30) THEN 'MEDIUM'
+                      WHEN cr.st_hipertensao_arterial = 1 AND cr.st_fumante = 1 THEN 'MEDIUM'
+                      WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'MASCULINO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 55 THEN 'MEDIUM'
+                      WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'FEMININO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 65 THEN 'MEDIUM'
+                      ELSE 'LOW'
+                  END AS computed_risk,
+                  uc.data_ultima_consulta AS "Última Consulta",
+                  uc.ds_filtro_cids AS "CIDs Fat"
+              FROM PacientesBase pb
+              LEFT JOIN LATERAL (
+                  SELECT st_fumante, st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca, st_infarto, st_derrame, st_problema_rins, peso_autorreferido
+                  FROM tb_condicoes_saude_auto WHERE co_cidadao = pb.co_seq_cidadao ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
+              ) cr ON true
+              LEFT JOIN LATERAL (
+                  SELECT TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_consulta, fat.ds_filtro_cids FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+              ) uc ON true
+              LEFT JOIN LATERAL (
+                  SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_pressao_sistolica IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+              ) up ON true
+              LEFT JOIN LATERAL (
+                  SELECT fat.nu_glicemia AS glicemia FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_glicemia IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+              ) ug ON true
+              LEFT JOIN LATERAL (
+                  SELECT fat.nu_peso AS peso FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_peso IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+              ) uw ON true
+              LEFT JOIN LATERAL (
+                  SELECT fat.nu_altura AS altura FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_altura IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+              ) ua ON true
+              LEFT JOIN LATERAL (
+                  SELECT hem.vl_hemoglobina_glicada FROM (
+                      SELECT req.co_seq_exame_requisitado FROM tb_exame_requisitado req WHERE req.co_prontuario = pb.co_seq_prontuario ORDER BY req.co_seq_exame_requisitado DESC LIMIT 1
+                  ) as safe_req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = safe_req.co_seq_exame_requisitado LIMIT 1
+              ) uh ON true
+          )
+          SELECT COUNT(*) as total FROM ComputedPatients WHERE 1=1
+        `;
+
+        if (filters.riskLevel) {
+          const levels = filters.riskLevel.split(',');
+          const placeholders = levels.map((_: any, i: number) => `$${countParams.length + i + 1}`);
+          dynamicCountQuery += ` AND computed_risk IN (${placeholders.join(',')})`;
+          countParams.push(...levels);
+        }
+
+        if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
+          dynamicCountQuery += ` AND ("Última Consulta" IS NULL OR "Última Consulta" < NOW() - ($${countParams.length + 1} || ' months')::interval)`;
+          countParams.push(filters.consultMonths);
+        }
+
+        if (filters.cids && filters.cids.length > 0) {
+          const cidConditions = filters.cids.map((_: any, i: number) => `"CIDs Fat" LIKE $${countParams.length + i + 1}`).join(' OR ');
+          dynamicCountQuery += ` AND (${cidConditions})`;
+          filters.cids.forEach((cid: string) => countParams.push(`%${cid}%`));
+        }
+
+        try {
+          const countRes = await pecQuery(dynamicCountQuery, countParams);
+          total = parseInt((countRes as any)?.[0]?.total || '0', 10);
+        } catch (e) {
+          console.error('[RiskStratificationService] Precise dynamic count failed:', e);
+          total = 0;
+        }
+      } else if (!extraWhere) {
         // Fast estimate for the entire database to avoid 20-second COUNT(*) scans
         const estimateQuery = `SELECT reltuples::bigint AS total FROM pg_class WHERE relname = 'tb_cidadao'`;
         try {
@@ -301,7 +397,7 @@ export class RiskStratificationService {
           total = 1200000;
         }
       } else {
-        // Exact count when filters are applied (smaller dataset)
+        // Exact count when simple filters are applied (smaller dataset, no dynamic filters)
         const countQuery = `
           SELECT COUNT(*) as total
           FROM tb_cidadao c
@@ -415,7 +511,7 @@ export class RiskStratificationService {
                     WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 7 THEN 'MEDIUM'
                     WHEN ug.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(ug.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) >= 126 THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND cr.st_diabetes = 1 THEN 'MEDIUM'
-                    WHEN (COALESCE(uw.peso, cr.peso_autorreferido) IS NOT NULL AND ua.altura IS NOT NULL AND (COALESCE(uw.peso, cr.peso_autorreferido)::numeric / POWER(ua.altura::numeric / 100, 2)) >= 30) THEN 'MEDIUM'
+                    WHEN (COALESCE(uw.peso, cr.peso_autorreferido) IS NOT NULL AND ua.altura IS NOT NULL AND ua.altura > 0 AND (COALESCE(uw.peso, cr.peso_autorreferido)::numeric / POWER(ua.altura::numeric / 100, 2)) >= 30) THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND cr.st_fumante = 1 THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'MASCULINO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 55 THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'FEMININO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 65 THEN 'MEDIUM'
@@ -650,12 +746,16 @@ export class RiskStratificationService {
         params.push(...uds);
       }
 
-      // Microarea filter (default to '01' if nothing set)
-      const microarea = filters.microarea && filters.microarea !== 'all' ? filters.microarea : '01';
-      const mas = microarea.split(',');
-      const maPh = mas.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
-      extraWhere += ` AND c.nu_micro_area IN (${maPh})`;
-      params.push(...mas);
+      // Microarea filter (only applied when explicitly set)
+      if (filters.microarea && filters.microarea !== 'all') {
+        const mas = filters.microarea.split(',');
+        const maPh = mas.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND c.nu_micro_area IN (${maPh})`;
+        params.push(...mas);
+      } else if (!filters.ine || filters.ine === 'all') {
+        // Default to microarea 01 only when no INE filter is set either
+        extraWhere += ` AND c.nu_micro_area IN ('01', '1', '001')`;
+      }
 
       // Condition filter (DM, HAS, or both)
       let condWhere = "";
@@ -685,7 +785,8 @@ export class RiskStratificationService {
           cr.st_hipertensao_arterial AS "flag_has",
           cr.st_diabetes AS "flag_dm",
           cr.st_doenca_cardiaca AS "flag_cardiaca",
-          cr.st_problema_rins AS "flag_renal"
+          cr.st_problema_rins AS "flag_renal",
+          COALESCE(c.nu_telefone_celular, c.nu_telefone_residencial, c.nu_telefone_contato) AS "telefone"
         FROM tb_cidadao c
         JOIN tb_cidadao_vinculacao_equipe ve ON c.co_seq_cidadao = ve.co_cidadao
         LEFT JOIN tb_condicoes_saude_auto cr ON c.co_seq_cidadao = cr.co_cidadao
@@ -712,6 +813,7 @@ export class RiskStratificationService {
         dm: r.flag_dm === 1,
         cardiaca: r.flag_cardiaca === 1,
         renal: r.flag_renal === 1,
+        telefone: r.telefone || null,
       }));
     } catch (error: any) {
       console.error('[MapPatients] DB Error:', error.message);
@@ -783,7 +885,72 @@ export class RiskStratificationService {
         params.push(...mas);
       }
 
-      let query = `
+      const hasFilter = extraWhere.trim().length > 0;
+
+      let query: string;
+
+      if (hasFilter) {
+        // FULL query with real C4/C5 indicators (safe — filtered dataset is small)
+        query = `
+          WITH TargetCidadaos AS (
+            SELECT c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine,
+                   (SELECT fp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fp WHERE fp.co_cidadao = c.co_seq_cidadao LIMIT 1) AS co_seq_fat_cidadao_pec,
+                   (SELECT p.co_seq_prontuario FROM tb_prontuario p WHERE p.co_cidadao = c.co_seq_cidadao LIMIT 1) AS co_seq_prontuario
+            FROM tb_cidadao c
+            ${veJoin}
+            WHERE c.dt_obito IS NULL 
+              AND ve.st_saida_cadastro_obito = 0 
+              AND ve.st_saida_cadastro_territorio = 0
+              ${extraWhere}
+          ),
+          Diagnosis AS (
+            SELECT 
+              tc.*,
+              COALESCE(csa.st_hipertensao_arterial, 0) as is_hyp,
+              COALESCE(csa.st_diabetes, 0) as is_dm,
+              (COALESCE(csa.st_infarto, 0) + COALESCE(csa.st_derrame, 0) + COALESCE(csa.st_doenca_cardiaca, 0) + COALESCE(csa.st_problema_rins, 0)) > 0 as is_high_risk_base,
+              -- Indicators: última consulta
+              (SELECT MAX(TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD')) FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = tc.co_seq_fat_cidadao_pec) AS dt_ultima_consulta,
+              -- PA nos últimos 6 meses
+              (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = tc.co_seq_fat_cidadao_pec AND f.nu_pressao_sistolica IS NOT NULL AND TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '6 months' LIMIT 1) AS has_pa_6m,
+              -- Visita domiciliar nos últimos 12 meses
+              (SELECT 1 FROM tb_fat_visita_domiciliar fvd WHERE fvd.co_fat_cidadao_pec = tc.co_seq_fat_cidadao_pec AND TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '12 months' LIMIT 1) AS has_visita_12m,
+              -- Peso/Altura nos últimos 12 meses
+              (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = tc.co_seq_fat_cidadao_pec AND f.nu_peso IS NOT NULL AND f.nu_altura IS NOT NULL AND TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '12 months' LIMIT 1) AS has_peso_altura,
+              -- HbA1c nos últimos 12 meses
+              (SELECT 1 FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado WHERE req.co_prontuario = tc.co_seq_prontuario LIMIT 1) AS has_hba1c
+            FROM TargetCidadaos tc
+            LEFT JOIN tb_condicoes_saude_auto csa ON tc.co_seq_cidadao = csa.co_cidadao
+          ),
+          Classified AS (
+            SELECT *,
+              CASE WHEN is_high_risk_base THEN 'HIGH' WHEN is_hyp = 1 OR is_dm = 1 THEN 'MEDIUM' ELSE 'LOW' END AS risk_level
+            FROM Diagnosis
+          )
+          SELECT
+            COUNT(*) AS total,
+            COUNT(*) FILTER (WHERE risk_level = 'HIGH') AS high_risk,
+            COUNT(*) FILTER (WHERE risk_level = 'MEDIUM') AS medium_risk,
+            COUNT(*) FILTER (WHERE risk_level = 'LOW') AS low_risk,
+            COUNT(*) FILTER (WHERE is_hyp = 1) AS hyp_total,
+            COUNT(*) FILTER (WHERE is_dm = 1) AS dm_total,
+            -- HAS indicators
+            COUNT(*) FILTER (WHERE is_hyp = 1 AND dt_ultima_consulta >= NOW() - INTERVAL '6 months') AS hyp_consulta_6m,
+            COUNT(*) FILTER (WHERE is_hyp = 1 AND has_pa_6m = 1) AS hyp_pa_6m,
+            COUNT(*) FILTER (WHERE is_hyp = 1 AND has_visita_12m = 1) AS hyp_visita_12m,
+            COUNT(*) FILTER (WHERE is_hyp = 1 AND has_peso_altura = 1) AS hyp_peso_altura,
+            -- DM indicators
+            COUNT(*) FILTER (WHERE is_dm = 1 AND dt_ultima_consulta >= NOW() - INTERVAL '6 months') AS dm_consulta_6m,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND has_pa_6m = 1) AS dm_pa_6m,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND has_peso_altura = 1) AS dm_peso_altura,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND has_hba1c = 1) AS dm_hba1c,
+            0 AS dm_exame_pes,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND has_visita_12m = 1) AS dm_visita_12m
+          FROM Classified
+        `;
+      } else {
+        // LIGHTWEIGHT query — no indicators (too expensive for 1.5M patients)
+        query = `
           WITH TargetCidadaos AS (
             SELECT c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine
             FROM tb_cidadao c
@@ -813,9 +980,12 @@ export class RiskStratificationService {
             COUNT(*) FILTER (WHERE risk_level = 'MEDIUM') AS medium_risk,
             COUNT(*) FILTER (WHERE risk_level = 'LOW') AS low_risk,
             COUNT(*) FILTER (WHERE is_hyp = 1) AS hyp_total,
-            COUNT(*) FILTER (WHERE is_dm = 1) AS dm_total
+            COUNT(*) FILTER (WHERE is_dm = 1) AS dm_total,
+            0 AS hyp_consulta_6m, 0 AS hyp_pa_6m, 0 AS hyp_visita_12m, 0 AS hyp_peso_altura,
+            0 AS dm_consulta_6m, 0 AS dm_pa_6m, 0 AS dm_peso_altura, 0 AS dm_hba1c, 0 AS dm_exame_pes, 0 AS dm_visita_12m
           FROM Classified
         `;
+      }
 
       const rows = await pecQuery(query, params);
       if (!rows || (rows as any[]).length === 0) throw new Error('No data');
