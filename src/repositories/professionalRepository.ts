@@ -37,6 +37,27 @@ export const professionalRepository = {
     return bcrypt.compare(plain, hashed);
   },
 
+  async update(id: string, data: Partial<Professional>): Promise<Professional> {
+    const updateData = { ...data };
+    if (updateData.password) {
+      updateData.password = await bcrypt.hash(updateData.password, SALT_ROUNDS);
+    }
+    return prisma.professional.update({
+      where: { id },
+      data: updateData,
+    });
+  },
+
+  async updatePasswordByEmail(email: string, plainPassword: string): Promise<Professional> {
+    const hashedPassword = await bcrypt.hash(plainPassword, SALT_ROUNDS);
+    return prisma.professional.update({
+      where: { email },
+      data: {
+        password: hashedPassword,
+      },
+    });
+  },
+
   async deleteProfessional(id: string): Promise<Professional> {
     return prisma.professional.delete({
       where: { id },

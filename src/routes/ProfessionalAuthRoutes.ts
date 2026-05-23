@@ -11,5 +11,10 @@ router.post('/register', authController.register.bind(authController));
 router.post('/login', authController.login.bind(authController));
 // Rota de deleção de conta (requer autenticação)
 router.delete('/account', authMiddleware, authController.deleteAccount.bind(authController));
+// Atualização de perfil
+router.put('/profile', authMiddleware, authController.updateProfile.bind(authController));
+// Recuperação de senha
+router.post('/forgot-password', authController.forgotPassword.bind(authController));
+router.post('/reset-password', authController.resetPassword.bind(authController));
 
 export default router;

@@ -24,8 +24,10 @@ if (isPecConfigured) {
     user: process.env.USUARIO_PEC,
     password: process.env.SENHA_PEC,
     max: 15,
-    idleTimeoutMillis: 60000,
-    connectionTimeoutMillis: 60000,
+    idleTimeoutMillis: 15000,          // Descarta conexões inativas em 15s para renovar o pool
+    connectionTimeoutMillis: 5000,    // Se a VPN cair, falha rápido (5s) em vez de travar por 1 minuto
+    keepAlive: true,                  // Ativa TCP Keep-Alive
+    keepAliveInitialDelayMillis: 10000 // Inicia teste de vida após 10s de inatividade
   });
 
   // SEGURANÇA: Configura CADA conexão como somente leitura + schema correto
@@ -34,6 +36,7 @@ if (isPecConfigured) {
     // Força read-only: qualquer INSERT/UPDATE/DELETE vai falhar
     client.query(`SET default_transaction_read_only = ON`);
     client.query(`SET search_path TO "${schema}"`);
+    client.query(`SET statement_timeout = 15000`); // Limita consultas a no máximo 15 segundos
   });
 
   pecPool.on('error', (err) => {
