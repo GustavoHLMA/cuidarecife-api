@@ -301,18 +301,48 @@ export class RiskStratificationService {
         // Precise count on filtered dataset with dynamic sub-queries
         const countParams = [...params];
         let dynamicCountQuery = `
-          WITH CidadaoFiltrado AS (
-              SELECT c.co_seq_cidadao, c.no_sexo, c.dt_nascimento,
-                     (SELECT fp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fp WHERE fp.co_cidadao = c.co_seq_cidadao LIMIT 1) AS co_seq_fat_cidadao_pec
+          WITH CidadaosFiltradosAll AS (
+              SELECT DISTINCT ON (COALESCE(c.nu_cpf, c.co_seq_cidadao::text))
+                  c.co_seq_cidadao, c.no_sexo, c.dt_nascimento, c.nu_cpf, c.dt_atualizado
               FROM tb_cidadao c
               ${requiresVeJoin ? veJoin : ''}
               WHERE c.dt_obito IS NULL 
+                AND c.st_ativo = 1
+                ${requiresVeJoin ? 'AND ve.st_saida_cadastro_territorio = 0 AND ve.st_saida_cadastro_obito = 0' : ''}
                 ${extraWhere}
+              ORDER BY COALESCE(c.nu_cpf, c.co_seq_cidadao::text), c.dt_atualizado DESC, c.co_seq_cidadao DESC
+          ),
+          CidadaoFiltrado AS (
+              SELECT *,
+                     CASE 
+                       WHEN nu_cpf IS NOT NULL THEN (
+                         SELECT array_agg(sibling.co_seq_cidadao) 
+                         FROM tb_cidadao sibling 
+                         WHERE sibling.nu_cpf = CidadaosFiltradosAll.nu_cpf 
+                           AND sibling.dt_obito IS NULL
+                           AND sibling.st_ativo = 1
+                       )
+                       ELSE ARRAY[co_seq_cidadao]
+                     END AS all_co_seq_cidadaos
+              FROM CidadaosFiltradosAll
           ),
           PacientesBase AS (
-              SELECT cf.co_seq_cidadao, cf.co_seq_fat_cidadao_pec, p.co_seq_prontuario, cf.no_sexo, cf.dt_nascimento
+              SELECT 
+                  cf.co_seq_cidadao, 
+                  cf.no_sexo, 
+                  cf.dt_nascimento,
+                  cf.all_co_seq_cidadaos,
+                  (
+                      SELECT array_agg(p.co_seq_prontuario) 
+                      FROM tb_prontuario p 
+                      WHERE p.co_cidadao = ANY(cf.all_co_seq_cidadaos)
+                  ) AS all_co_seq_prontuarios,
+                  (
+                      SELECT array_agg(fcp.co_seq_fat_cidadao_pec) 
+                      FROM tb_fat_cidadao_pec fcp 
+                      WHERE fcp.co_cidadao = ANY(cf.all_co_seq_cidadaos)
+                  ) AS all_co_seq_fat_cidadao_pecs
               FROM CidadaoFiltrado cf
-              LEFT JOIN tb_prontuario p ON cf.co_seq_cidadao = p.co_cidadao
           ),
           ComputedPatients AS (
               SELECT 
@@ -336,26 +366,26 @@ export class RiskStratificationService {
               FROM PacientesBase pb
               LEFT JOIN LATERAL (
                   SELECT st_fumante, st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca, st_infarto, st_derrame, st_problema_rins, peso_autorreferido
-                  FROM tb_condicoes_saude_auto WHERE co_cidadao = pb.co_seq_cidadao ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
+                  FROM tb_condicoes_saude_auto WHERE co_cidadao = ANY(pb.all_co_seq_cidadaos) ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
               ) cr ON true
               LEFT JOIN LATERAL (
-                  SELECT TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_consulta, fat.ds_filtro_cids FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_consulta, fat.ds_filtro_cids FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) uc ON true
               LEFT JOIN LATERAL (
-                  SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_pressao_sistolica IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_pressao_sistolica IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) up ON true
               LEFT JOIN LATERAL (
-                  SELECT fat.nu_glicemia AS glicemia FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_glicemia IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT fat.nu_glicemia AS glicemia FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_glicemia IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) ug ON true
               LEFT JOIN LATERAL (
-                  SELECT fat.nu_peso AS peso FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_peso IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT fat.nu_peso AS peso FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_peso IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) uw ON true
               LEFT JOIN LATERAL (
-                  SELECT fat.nu_altura AS altura FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_altura IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT fat.nu_altura AS altura FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_altura IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) ua ON true
               LEFT JOIN LATERAL (
                   SELECT hem.vl_hemoglobina_glicada FROM (
-                      SELECT req.co_seq_exame_requisitado FROM tb_exame_requisitado req WHERE req.co_prontuario = pb.co_seq_prontuario ORDER BY req.co_seq_exame_requisitado DESC LIMIT 1
+                      SELECT req.co_seq_exame_requisitado FROM tb_exame_requisitado req WHERE req.co_prontuario = ANY(pb.all_co_seq_prontuarios) ORDER BY req.co_seq_exame_requisitado DESC LIMIT 1
                   ) as safe_req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = safe_req.co_seq_exame_requisitado LIMIT 1
               ) uh ON true
           )
@@ -399,10 +429,12 @@ export class RiskStratificationService {
       } else {
         // Exact count when simple filters are applied (smaller dataset, no dynamic filters)
         const countQuery = `
-          SELECT COUNT(*) as total
+          SELECT COUNT(DISTINCT COALESCE(c.nu_cpf, c.co_seq_cidadao::text)) as total
           FROM tb_cidadao c
           ${requiresVeJoin ? veJoin : ''}
           WHERE c.dt_obito IS NULL 
+            AND c.st_ativo = 1
+            ${requiresVeJoin ? 'AND ve.st_saida_cadastro_territorio = 0 AND ve.st_saida_cadastro_obito = 0' : ''}
             ${extraWhere}
         `;
         const countRes = await pecQuery(countQuery, params);
@@ -414,11 +446,9 @@ export class RiskStratificationService {
 
       const cteAlreadyPaginated = !filters.riskLevel && (!filters.cids || filters.cids.length === 0) && filters.consultMonths === undefined;
 
-      const orderByClause = "ORDER BY c.co_seq_cidadao ASC";
-
       let fullQuery = `
-        WITH CidadaoFiltrado AS (
-            SELECT 
+        WITH CidadaosFiltradosAll AS (
+            SELECT DISTINCT ON (COALESCE(c.nu_cpf, c.co_seq_cidadao::text))
                 c.co_seq_cidadao, 
                 c.no_cidadao, 
                 c.dt_nascimento, 
@@ -431,36 +461,63 @@ export class RiskStratificationService {
                 c.ds_cep,
                 c.nu_telefone_celular,
                 c.nu_telefone_residencial,
-                c.nu_telefone_contato
+                c.nu_telefone_contato,
+                c.dt_atualizado,
+                c.nu_cpf
             FROM tb_cidadao c
             ${requiresVeJoin ? veJoin : ''}
             WHERE c.dt_obito IS NULL
+              AND c.st_ativo = 1
+              ${requiresVeJoin ? 'AND ve.st_saida_cadastro_territorio = 0 AND ve.st_saida_cadastro_obito = 0' : ''}
               ${extraWhere}
-            ${orderByClause}
+            ORDER BY COALESCE(c.nu_cpf, c.co_seq_cidadao::text), c.dt_atualizado DESC, c.co_seq_cidadao DESC
+        ),
+        CidadaoFiltrado AS (
+            SELECT *,
+                CASE 
+                  WHEN nu_cpf IS NOT NULL THEN (
+                    SELECT array_agg(sibling.co_seq_cidadao) 
+                    FROM tb_cidadao sibling 
+                    WHERE sibling.nu_cpf = CidadaosFiltradosAll.nu_cpf 
+                      AND sibling.dt_obito IS NULL
+                      AND sibling.st_ativo = 1
+                  )
+                  ELSE ARRAY[co_seq_cidadao]
+                END AS all_co_seq_cidadaos
+            FROM CidadaosFiltradosAll
+            ORDER BY co_seq_cidadao ASC
             ${cteAlreadyPaginated ? `LIMIT ${pageSize} OFFSET ${offset}` : ''}
         ),
         PacientesBase AS (
             SELECT 
                 cf.*,
-                p.co_seq_prontuario,
-                fcp.co_seq_fat_cidadao_pec,
+                (
+                    SELECT array_agg(p.co_seq_prontuario) 
+                    FROM tb_prontuario p 
+                    WHERE p.co_cidadao = ANY(cf.all_co_seq_cidadaos)
+                ) AS all_co_seq_prontuarios,
+                (
+                    SELECT array_agg(fcp.co_seq_fat_cidadao_pec) 
+                    FROM tb_fat_cidadao_pec fcp 
+                    WHERE fcp.co_cidadao = ANY(cf.all_co_seq_cidadaos)
+                ) AS all_co_seq_fat_cidadao_pecs,
                 (
                    SELECT us.no_unidade_saude 
                    FROM tb_prontuario_unidade_saude pus
                    JOIN tb_unidade_saude us ON pus.co_unidade_saude = us.co_seq_unidade_saude
-                   WHERE pus.co_cidadao = cf.co_seq_cidadao
+                   WHERE pus.co_cidadao = ANY(cf.all_co_seq_cidadaos)
+                   ORDER BY pus.co_seq_prontuario_unidade_saud DESC
                    LIMIT 1
                 ) AS no_unidade_saude,
                 (
                    SELECT eq.no_equipe 
                    FROM tb_cidadao_vinculacao_equipe ve
                    JOIN tb_equipe eq ON ve.nu_ine = eq.nu_ine
-                   WHERE ve.co_cidadao = cf.co_seq_cidadao
+                   WHERE ve.co_cidadao = ANY(cf.all_co_seq_cidadaos)
+                   ORDER BY ve.co_seq_cidadao_vinculacao_eqp DESC
                    LIMIT 1
                 ) AS no_equipe
             FROM CidadaoFiltrado cf
-            LEFT JOIN tb_prontuario p ON cf.co_seq_cidadao = p.co_cidadao
-            LEFT JOIN tb_fat_cidadao_pec fcp ON cf.co_seq_cidadao = fcp.co_cidadao
         )
         SELECT *
         FROM (
@@ -495,6 +552,7 @@ export class RiskStratificationService {
                   NULLIF(pb.ds_cep, '')
                 ) AS "Endereço",
                 COALESCE(pb.nu_telefone_celular, pb.nu_telefone_contato, pb.nu_telefone_residencial) AS "Telefone",
+                pb.dt_atualizado AS "Atualizado Em",
                 CASE 
                     WHEN cr.st_fumante = 1 THEN 'Sim'
                     WHEN cr.st_fumante = 0 THEN 'Não'
@@ -526,7 +584,7 @@ export class RiskStratificationService {
                     st_doenca_cardiaca, st_infarto, st_derrame, st_problema_rins,
                     peso_autorreferido
                 FROM tb_condicoes_saude_auto
-                WHERE co_cidadao = pb.co_seq_cidadao
+                WHERE co_cidadao = ANY(pb.all_co_seq_cidadaos)
                 ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
             ) cr ON true
             
@@ -536,7 +594,7 @@ export class RiskStratificationService {
                        fat.ds_filtro_cids,
                        fat.ds_filtro_ciaps
                 FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec
+                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs)
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) uc ON true
             
@@ -544,7 +602,7 @@ export class RiskStratificationService {
             LEFT JOIN LATERAL (
                 SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao
                 FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_pressao_sistolica IS NOT NULL
+                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_pressao_sistolica IS NOT NULL
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) up ON true
             
@@ -552,7 +610,7 @@ export class RiskStratificationService {
             LEFT JOIN LATERAL (
                 SELECT fat.nu_glicemia AS glicemia
                 FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_glicemia IS NOT NULL
+                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_glicemia IS NOT NULL
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) ug ON true
             
@@ -560,7 +618,7 @@ export class RiskStratificationService {
             LEFT JOIN LATERAL (
                 SELECT fat.nu_peso AS peso
                 FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_peso IS NOT NULL
+                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_peso IS NOT NULL
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) uw ON true
             
@@ -568,14 +626,14 @@ export class RiskStratificationService {
             LEFT JOIN LATERAL (
                 SELECT fat.nu_altura AS altura
                 FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec AND fat.nu_altura IS NOT NULL
+                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_altura IS NOT NULL
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) ua ON true
 
             -- Última visita domiciliar
             LEFT JOIN LATERAL (
                 SELECT TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_visita FROM tb_fat_visita_domiciliar fvd
-                WHERE fvd.co_fat_cidadao_pec = pb.co_seq_fat_cidadao_pec ORDER BY (fvd.co_dim_tempo + 0) DESC LIMIT 1
+                WHERE fvd.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) ORDER BY (fvd.co_dim_tempo + 0) DESC LIMIT 1
             ) uv ON true
 
             -- HbA1c (com Optimization Fence)
@@ -584,7 +642,7 @@ export class RiskStratificationService {
                 FROM (
                     SELECT req.co_seq_exame_requisitado
                     FROM tb_exame_requisitado req
-                    WHERE req.co_prontuario = pb.co_seq_prontuario
+                    WHERE req.co_prontuario = ANY(pb.all_co_seq_prontuarios)
                     ORDER BY req.co_seq_exame_requisitado DESC 
                     OFFSET 0
                 ) as safe_req
@@ -686,6 +744,7 @@ export class RiskStratificationService {
           endereco: row['Endereço'] || null,
           telefone: row['Telefone'] || null,
           data_ultimo_exame_pe: row['Último Exame Pé'] || null,
+          dt_atualizado: row['Atualizado Em'] || null,
         } as any;
         return this.stratifySinglePatient(p);
       });
@@ -772,28 +831,68 @@ export class RiskStratificationService {
       params.push(2000); // Hard limit
 
       const sql = `
+        WITH UniqueCidadaos AS (
+          SELECT DISTINCT ON (COALESCE(c.nu_cpf, c.co_seq_cidadao::text))
+            c.co_seq_cidadao,
+            c.no_cidadao,
+            c.dt_nascimento,
+            c.no_sexo,
+            c.nu_micro_area,
+            c.ds_logradouro,
+            c.nu_numero,
+            c.no_bairro,
+            c.ds_cep,
+            c.nu_telefone_celular,
+            c.nu_telefone_residencial,
+            c.nu_telefone_contato,
+            c.nu_cpf,
+            c.dt_atualizado
+          FROM tb_cidadao c
+          JOIN tb_cidadao_vinculacao_equipe ve ON c.co_seq_cidadao = ve.co_cidadao
+          WHERE c.dt_obito IS NULL
+            AND c.st_ativo = 1
+            AND ve.st_saida_cadastro_obito = 0
+            AND ve.st_saida_cadastro_territorio = 0
+            ${extraWhere}
+          ORDER BY COALESCE(c.nu_cpf, c.co_seq_cidadao::text), c.dt_atualizado DESC, c.co_seq_cidadao DESC
+        ),
+        CidadaoWithSiblings AS (
+          SELECT uc.*,
+                 CASE 
+                   WHEN uc.nu_cpf IS NOT NULL THEN (
+                     SELECT array_agg(sibling.co_seq_cidadao)
+                     FROM tb_cidadao sibling
+                     WHERE sibling.nu_cpf = uc.nu_cpf 
+                       AND sibling.dt_obito IS NULL
+                       AND sibling.st_ativo = 1
+                   )
+                   ELSE ARRAY[uc.co_seq_cidadao]
+                 END AS all_co_seq_cidadaos
+          FROM UniqueCidadaos uc
+        )
         SELECT
-          c.co_seq_cidadao AS "id",
-          c.no_cidadao AS "nome",
-          EXTRACT(YEAR FROM AGE(NOW(), c.dt_nascimento))::int AS "idade",
-          c.no_sexo AS "sexo",
-          c.nu_micro_area AS "microarea",
-          c.ds_logradouro AS "logradouro",
-          c.nu_numero AS "numero",
-          c.no_bairro AS "bairro",
-          c.ds_cep AS "cep",
+          cws.co_seq_cidadao AS "id",
+          cws.no_cidadao AS "nome",
+          EXTRACT(YEAR FROM AGE(NOW(), cws.dt_nascimento))::int AS "idade",
+          cws.no_sexo AS "sexo",
+          cws.nu_micro_area AS "microarea",
+          cws.ds_logradouro AS "logradouro",
+          cws.nu_numero AS "numero",
+          cws.no_bairro AS "bairro",
+          cws.ds_cep AS "cep",
           cr.st_hipertensao_arterial AS "flag_has",
           cr.st_diabetes AS "flag_dm",
           cr.st_doenca_cardiaca AS "flag_cardiaca",
           cr.st_problema_rins AS "flag_renal",
-          COALESCE(c.nu_telefone_celular, c.nu_telefone_residencial, c.nu_telefone_contato) AS "telefone"
-        FROM tb_cidadao c
-        JOIN tb_cidadao_vinculacao_equipe ve ON c.co_seq_cidadao = ve.co_cidadao
-        LEFT JOIN tb_condicoes_saude_auto cr ON c.co_seq_cidadao = cr.co_cidadao
-        WHERE c.dt_obito IS NULL
-          AND ve.st_saida_cadastro_obito = 0
-          AND ve.st_saida_cadastro_territorio = 0
-          ${extraWhere}
+          COALESCE(cws.nu_telefone_celular, cws.nu_telefone_residencial, cws.nu_telefone_contato) AS "telefone"
+        FROM CidadaoWithSiblings cws
+        LEFT JOIN LATERAL (
+          SELECT st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca, st_problema_rins
+          FROM tb_condicoes_saude_auto
+          WHERE co_cidadao = ANY(cws.all_co_seq_cidadaos)
+          ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
+        ) cr ON true
+        WHERE 1=1
           ${condWhere}
         LIMIT $${limitIdx}
       `;
@@ -892,35 +991,74 @@ export class RiskStratificationService {
       if (hasFilter) {
         // FULL query with real C4/C5 indicators (safe — filtered dataset is small)
         query = `
-          WITH TargetCidadaos AS (
-            SELECT c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine,
-                   (SELECT fp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fp WHERE fp.co_cidadao = c.co_seq_cidadao LIMIT 1) AS co_seq_fat_cidadao_pec,
-                   (SELECT p.co_seq_prontuario FROM tb_prontuario p WHERE p.co_cidadao = c.co_seq_cidadao LIMIT 1) AS co_seq_prontuario
+          WITH TargetCidadaosAll AS (
+            SELECT DISTINCT ON (COALESCE(c.nu_cpf, c.co_seq_cidadao::text))
+                   c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine, c.nu_cpf, c.dt_atualizado
             FROM tb_cidadao c
             ${veJoin}
             WHERE c.dt_obito IS NULL 
+              AND c.st_ativo = 1
               AND ve.st_saida_cadastro_obito = 0 
               AND ve.st_saida_cadastro_territorio = 0
               ${extraWhere}
+            ORDER BY COALESCE(c.nu_cpf, c.co_seq_cidadao::text), c.dt_atualizado DESC, c.co_seq_cidadao DESC
+          ),
+          TargetCidadaos AS (
+            SELECT 
+              tca.co_seq_cidadao,
+              tca.nu_micro_area,
+              tca.no_bairro,
+              tca.nu_ine,
+              CASE 
+                WHEN tca.nu_cpf IS NOT NULL THEN (
+                  SELECT array_agg(sibling.co_seq_cidadao)
+                  FROM tb_cidadao sibling
+                  WHERE sibling.nu_cpf = tca.nu_cpf 
+                    AND sibling.dt_obito IS NULL
+                    AND sibling.st_ativo = 1
+                )
+                ELSE ARRAY[tca.co_seq_cidadao]
+              END AS all_co_seq_cidadaos
+            FROM TargetCidadaosAll tca
+          ),
+          TargetCidadaosWithPECs AS (
+            SELECT
+              tc.*,
+              (
+                SELECT array_agg(fp.co_seq_fat_cidadao_pec)
+                FROM tb_fat_cidadao_pec fp
+                WHERE fp.co_cidadao = ANY(tc.all_co_seq_cidadaos)
+              ) AS all_co_seq_fat_cidadao_pecs,
+              (
+                SELECT array_agg(p.co_seq_prontuario)
+                FROM tb_prontuario p
+                WHERE p.co_cidadao = ANY(tc.all_co_seq_cidadaos)
+              ) AS all_co_seq_prontuarios
+            FROM TargetCidadaos tc
           ),
           Diagnosis AS (
             SELECT 
-              tc.*,
+              tcw.*,
               COALESCE(csa.st_hipertensao_arterial, 0) as is_hyp,
               COALESCE(csa.st_diabetes, 0) as is_dm,
               (COALESCE(csa.st_infarto, 0) + COALESCE(csa.st_derrame, 0) + COALESCE(csa.st_doenca_cardiaca, 0) + COALESCE(csa.st_problema_rins, 0)) > 0 as is_high_risk_base,
               -- Indicators: última consulta
-              (SELECT MAX(TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD')) FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = tc.co_seq_fat_cidadao_pec) AS dt_ultima_consulta,
+              (SELECT MAX(TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD')) FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs)) AS dt_ultima_consulta,
               -- PA nos últimos 6 meses
-              (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = tc.co_seq_fat_cidadao_pec AND f.nu_pressao_sistolica IS NOT NULL AND TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '6 months' LIMIT 1) AS has_pa_6m,
+              (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.nu_pressao_sistolica IS NOT NULL AND TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '6 months' LIMIT 1) AS has_pa_6m,
               -- Visita domiciliar nos últimos 12 meses
-              (SELECT 1 FROM tb_fat_visita_domiciliar fvd WHERE fvd.co_fat_cidadao_pec = tc.co_seq_fat_cidadao_pec AND TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '12 months' LIMIT 1) AS has_visita_12m,
+              (SELECT 1 FROM tb_fat_visita_domiciliar fvd WHERE fvd.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '12 months' LIMIT 1) AS has_visita_12m,
               -- Peso/Altura nos últimos 12 meses
-              (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = tc.co_seq_fat_cidadao_pec AND f.nu_peso IS NOT NULL AND f.nu_altura IS NOT NULL AND TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '12 months' LIMIT 1) AS has_peso_altura,
+              (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.nu_peso IS NOT NULL AND f.nu_altura IS NOT NULL AND TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '12 months' LIMIT 1) AS has_peso_altura,
               -- HbA1c nos últimos 12 meses
-              (SELECT 1 FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado WHERE req.co_prontuario = tc.co_seq_prontuario LIMIT 1) AS has_hba1c
-            FROM TargetCidadaos tc
-            LEFT JOIN tb_condicoes_saude_auto csa ON tc.co_seq_cidadao = csa.co_cidadao
+              (SELECT 1 FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado WHERE req.co_prontuario = ANY(tcw.all_co_seq_prontuarios) LIMIT 1) AS has_hba1c
+            FROM TargetCidadaosWithPECs tcw
+            LEFT JOIN LATERAL (
+              SELECT st_hipertensao_arterial, st_diabetes, st_infarto, st_derrame, st_doenca_cardiaca, st_problema_rins
+              FROM tb_condicoes_saude_auto
+              WHERE co_cidadao = ANY(tcw.all_co_seq_cidadaos)
+              ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
+            ) csa ON true
           ),
           Classified AS (
             SELECT *,
@@ -951,14 +1089,35 @@ export class RiskStratificationService {
       } else {
         // LIGHTWEIGHT query — no indicators (too expensive for 1.5M patients)
         query = `
-          WITH TargetCidadaos AS (
-            SELECT c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine
+          WITH TargetCidadaosAll AS (
+            SELECT DISTINCT ON (COALESCE(c.nu_cpf, c.co_seq_cidadao::text))
+                   c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine, c.nu_cpf, c.dt_atualizado
             FROM tb_cidadao c
             ${veJoin}
             WHERE c.dt_obito IS NULL 
+              AND c.st_ativo = 1
               AND ve.st_saida_cadastro_obito = 0 
               AND ve.st_saida_cadastro_territorio = 0
               ${extraWhere}
+            ORDER BY COALESCE(c.nu_cpf, c.co_seq_cidadao::text), c.dt_atualizado DESC, c.co_seq_cidadao DESC
+          ),
+          TargetCidadaos AS (
+            SELECT 
+              tca.co_seq_cidadao,
+              tca.nu_micro_area,
+              tca.no_bairro,
+              tca.nu_ine,
+              CASE 
+                WHEN tca.nu_cpf IS NOT NULL THEN (
+                  SELECT array_agg(sibling.co_seq_cidadao)
+                  FROM tb_cidadao sibling
+                  WHERE sibling.nu_cpf = tca.nu_cpf 
+                    AND sibling.dt_obito IS NULL
+                    AND sibling.st_ativo = 1
+                )
+                ELSE ARRAY[tca.co_seq_cidadao]
+              END AS all_co_seq_cidadaos
+            FROM TargetCidadaosAll tca
           ),
           Diagnosis AS (
             SELECT 
@@ -967,7 +1126,12 @@ export class RiskStratificationService {
               COALESCE(csa.st_diabetes, 0) as is_dm,
               (COALESCE(csa.st_infarto, 0) + COALESCE(csa.st_derrame, 0) + COALESCE(csa.st_doenca_cardiaca, 0) + COALESCE(csa.st_problema_rins, 0)) > 0 as is_high_risk_base
             FROM TargetCidadaos tc
-            LEFT JOIN tb_condicoes_saude_auto csa ON tc.co_seq_cidadao = csa.co_cidadao
+            LEFT JOIN LATERAL (
+              SELECT st_hipertensao_arterial, st_diabetes, st_infarto, st_derrame, st_doenca_cardiaca, st_problema_rins
+              FROM tb_condicoes_saude_auto
+              WHERE co_cidadao = ANY(tc.all_co_seq_cidadaos)
+              ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
+            ) csa ON true
           ),
           Classified AS (
             SELECT *,
