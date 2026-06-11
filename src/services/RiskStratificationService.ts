@@ -292,13 +292,29 @@ export class RiskStratificationService {
         params.push(`%${filters.search}%`);
       }
 
+      if (filters.sex) {
+        extraWhere += ` AND c.no_sexo = $${params.length + 1}`;
+        params.push(filters.sex);
+      }
+
+      if (filters.ageRange) {
+        const [minAge, maxAge] = filters.ageRange;
+        extraWhere += ` AND EXTRACT(YEAR FROM AGE(c.dt_nascimento)) BETWEEN $${params.length + 1} AND $${params.length + 2}`;
+        params.push(minAge, maxAge);
+      }
+
       let total = 0;
       const requiresVeJoin = (filters.ine && filters.ine !== 'all') || (filters.unidade && filters.unidade !== 'all');
 
-      const hasDynamicFilters = filters.riskLevel || (filters.cids && filters.cids.length > 0) || (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths));
+      const hasDynamicFilters = filters.riskLevel 
+        || (filters.cids && filters.cids.length > 0) 
+        || (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths))
+        || filters.smoking;
 
       if (hasDynamicFilters && extraWhere) {
-        // Precise count on filtered dataset with dynamic sub-queries
+        // Full-precision count: uses UNION ALL scalar lookups in LATERAL JOINs
+        // to compute risk from vitals (pressure, glucose, HbA1c, BMI) without arrays.
+        // UNION ALL allows PostgreSQL to use indexes efficiently for sibling lookups.
         const countParams = [...params];
         let dynamicCountQuery = `
           WITH CidadaosFiltradosAll AS (
@@ -312,81 +328,144 @@ export class RiskStratificationService {
                 ${extraWhere}
               ORDER BY COALESCE(c.nu_cpf, c.co_seq_cidadao::text), c.dt_atualizado DESC, c.co_seq_cidadao DESC
           ),
-          CidadaoFiltrado AS (
-              SELECT *,
-                     CASE 
-                       WHEN nu_cpf IS NOT NULL THEN (
-                         SELECT array_agg(sibling.co_seq_cidadao) 
-                         FROM tb_cidadao sibling 
-                         WHERE sibling.nu_cpf = CidadaosFiltradosAll.nu_cpf 
-                           AND sibling.dt_obito IS NULL
-                           AND sibling.st_ativo = 1
-                       )
-                       ELSE ARRAY[co_seq_cidadao]
-                     END AS all_co_seq_cidadaos
-              FROM CidadaosFiltradosAll
-          ),
-          PacientesBase AS (
-              SELECT 
-                  cf.co_seq_cidadao, 
-                  cf.no_sexo, 
-                  cf.dt_nascimento,
-                  cf.all_co_seq_cidadaos,
-                  (
-                      SELECT array_agg(p.co_seq_prontuario) 
-                      FROM tb_prontuario p 
-                      WHERE p.co_cidadao = ANY(cf.all_co_seq_cidadaos)
-                  ) AS all_co_seq_prontuarios,
-                  (
-                      SELECT array_agg(fcp.co_seq_fat_cidadao_pec) 
-                      FROM tb_fat_cidadao_pec fcp 
-                      WHERE fcp.co_cidadao = ANY(cf.all_co_seq_cidadaos)
-                  ) AS all_co_seq_fat_cidadao_pecs
-              FROM CidadaoFiltrado cf
-          ),
           ComputedPatients AS (
               SELECT 
                   CASE 
-                      WHEN (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 1) AS INTEGER) >= 180) OR (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 2) AS INTEGER) >= 110) THEN 'HIGH'
+                      WHEN (up.pressao_s IS NOT NULL AND up.pressao_s >= 180) OR (up.pressao_d IS NOT NULL AND up.pressao_d >= 110) THEN 'HIGH'
                       WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 9 THEN 'HIGH'
-                      WHEN ug.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(ug.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) > 250 THEN 'HIGH'
+                      WHEN ug.glicemia IS NOT NULL AND ug.glicemia > 250 THEN 'HIGH'
                       WHEN cr.st_infarto = 1 OR cr.st_derrame = 1 OR cr.st_doenca_cardiaca = 1 OR cr.st_problema_rins = 1 THEN 'HIGH'
-                      WHEN (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 1) AS INTEGER) >= 160) OR (up.pressao IS NOT NULL AND CAST(SPLIT_PART(up.pressao, '/', 2) AS INTEGER) >= 100) THEN 'MEDIUM'
+                      WHEN (up.pressao_s IS NOT NULL AND up.pressao_s >= 160) OR (up.pressao_d IS NOT NULL AND up.pressao_d >= 100) THEN 'MEDIUM'
                       WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 7 THEN 'MEDIUM'
-                      WHEN ug.glicemia IS NOT NULL AND CAST(REGEXP_REPLACE(ug.glicemia::text, '[^0-9]', '', 'g') AS INTEGER) >= 126 THEN 'MEDIUM'
+                      WHEN ug.glicemia IS NOT NULL AND ug.glicemia >= 126 THEN 'MEDIUM'
                       WHEN cr.st_hipertensao_arterial = 1 AND cr.st_diabetes = 1 THEN 'MEDIUM'
                       WHEN (COALESCE(uw.peso, cr.peso_autorreferido) IS NOT NULL AND ua.altura IS NOT NULL AND ua.altura > 0 AND (COALESCE(uw.peso, cr.peso_autorreferido)::numeric / POWER(ua.altura::numeric / 100, 2)) >= 30) THEN 'MEDIUM'
                       WHEN cr.st_hipertensao_arterial = 1 AND cr.st_fumante = 1 THEN 'MEDIUM'
-                      WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'MASCULINO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 55 THEN 'MEDIUM'
-                      WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'FEMININO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 65 THEN 'MEDIUM'
+                      WHEN cr.st_hipertensao_arterial = 1 AND cfa.no_sexo = 'MASCULINO' AND EXTRACT(YEAR FROM AGE(cfa.dt_nascimento)) > 55 THEN 'MEDIUM'
+                      WHEN cr.st_hipertensao_arterial = 1 AND cfa.no_sexo = 'FEMININO' AND EXTRACT(YEAR FROM AGE(cfa.dt_nascimento)) > 65 THEN 'MEDIUM'
                       ELSE 'LOW'
                   END AS computed_risk,
-                  uc.data_ultima_consulta AS "Última Consulta",
-                  uc.ds_filtro_cids AS "CIDs Fat"
-              FROM PacientesBase pb
+                  uc.data_ultima_consulta,
+                  uc.ds_filtro_cids,
+                  CASE 
+                      WHEN cr.st_fumante = 1 THEN 'Sim'
+                      WHEN cr.st_fumante = 0 THEN 'Não'
+                      ELSE 'Sem Registro'
+                  END AS "Fumante"
+              FROM CidadaosFiltradosAll cfa
+
+              -- Condições de Saúde (UNION ALL para buscar irmãos por CPF via índice)
               LEFT JOIN LATERAL (
-                  SELECT st_fumante, st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca, st_infarto, st_derrame, st_problema_rins, peso_autorreferido
-                  FROM tb_condicoes_saude_auto WHERE co_cidadao = ANY(pb.all_co_seq_cidadaos) ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
+                  SELECT st_fumante, st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca,
+                         st_infarto, st_derrame, st_problema_rins, peso_autorreferido
+                  FROM tb_condicoes_saude_auto
+                  WHERE co_cidadao IN (
+                      SELECT sibling.co_seq_cidadao FROM tb_cidadao sibling
+                      WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                      UNION ALL
+                      SELECT cfa.co_seq_cidadao WHERE cfa.nu_cpf IS NULL
+                  )
+                  ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
               ) cr ON true
+
+              -- Última consulta (UNION ALL via fat_cidadao_pec)
               LEFT JOIN LATERAL (
-                  SELECT TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_consulta, fat.ds_filtro_cids FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_consulta, fat.ds_filtro_cids
+                  FROM (
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                      JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                      WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                      UNION ALL
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                      WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                  ) ids
+                  JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                  ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) uc ON true
+
+              -- Última Pressão (UNION ALL)
               LEFT JOIN LATERAL (
-                  SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_pressao_sistolica IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT fat.nu_pressao_sistolica AS pressao_s, fat.nu_pressao_diastolica AS pressao_d
+                  FROM (
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                      JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                      WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                      UNION ALL
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                      WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                  ) ids
+                  JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                  WHERE fat.nu_pressao_sistolica IS NOT NULL
+                  ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) up ON true
+
+              -- Última Glicemia (UNION ALL)
               LEFT JOIN LATERAL (
-                  SELECT fat.nu_glicemia AS glicemia FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_glicemia IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT fat.nu_glicemia AS glicemia
+                  FROM (
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                      JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                      WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                      UNION ALL
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                      WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                  ) ids
+                  JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                  WHERE fat.nu_glicemia IS NOT NULL
+                  ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) ug ON true
+
+              -- Último Peso (UNION ALL)
               LEFT JOIN LATERAL (
-                  SELECT fat.nu_peso AS peso FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_peso IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT fat.nu_peso AS peso
+                  FROM (
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                      JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                      WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                      UNION ALL
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                      WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                  ) ids
+                  JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                  WHERE fat.nu_peso IS NOT NULL
+                  ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) uw ON true
+
+              -- Última Altura (UNION ALL)
               LEFT JOIN LATERAL (
-                  SELECT fat.nu_altura AS altura FROM tb_fat_atendimento_individual fat WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_altura IS NOT NULL ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
+                  SELECT fat.nu_altura AS altura
+                  FROM (
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                      JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                      WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                      UNION ALL
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                      WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                  ) ids
+                  JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                  WHERE fat.nu_altura IS NOT NULL
+                  ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) ua ON true
+
+              -- HbA1c (UNION ALL via prontuário)
               LEFT JOIN LATERAL (
-                  SELECT hem.vl_hemoglobina_glicada FROM (
-                      SELECT req.co_seq_exame_requisitado FROM tb_exame_requisitado req WHERE req.co_prontuario = ANY(pb.all_co_seq_prontuarios) ORDER BY req.co_seq_exame_requisitado DESC LIMIT 1
-                  ) as safe_req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = safe_req.co_seq_exame_requisitado LIMIT 1
+                  SELECT hem.vl_hemoglobina_glicada 
+                  FROM (
+                      SELECT req.co_seq_exame_requisitado
+                      FROM (
+                          SELECT p.co_seq_prontuario FROM tb_cidadao sibling
+                          JOIN tb_prontuario p ON p.co_cidadao = sibling.co_seq_cidadao
+                          WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                          UNION ALL
+                          SELECT p.co_seq_prontuario FROM tb_prontuario p
+                          WHERE p.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                      ) prons
+                      JOIN tb_exame_requisitado req ON req.co_prontuario = prons.co_seq_prontuario
+                      ORDER BY req.co_seq_exame_requisitado DESC
+                      OFFSET 0
+                  ) safe_req
+                  JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = safe_req.co_seq_exame_requisitado
+                  LIMIT 1
               ) uh ON true
           )
           SELECT COUNT(*) as total FROM ComputedPatients WHERE 1=1
@@ -400,22 +479,42 @@ export class RiskStratificationService {
         }
 
         if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
-          dynamicCountQuery += ` AND ("Última Consulta" IS NULL OR "Última Consulta" < NOW() - ($${countParams.length + 1} || ' months')::interval)`;
+          dynamicCountQuery += ` AND (data_ultima_consulta IS NULL OR data_ultima_consulta < NOW() - ($${countParams.length + 1} || ' months')::interval)`;
           countParams.push(filters.consultMonths);
         }
 
         if (filters.cids && filters.cids.length > 0) {
-          const cidConditions = filters.cids.map((_: any, i: number) => `"CIDs Fat" LIKE $${countParams.length + i + 1}`).join(' OR ');
+          const cidConditions = filters.cids.map((_: any, i: number) => `ds_filtro_cids LIKE $${countParams.length + i + 1}`).join(' OR ');
           dynamicCountQuery += ` AND (${cidConditions})`;
           filters.cids.forEach((cid: string) => countParams.push(`%${cid}%`));
+        }
+
+        if (filters.smoking) {
+          dynamicCountQuery += ` AND "Fumante" = $${countParams.length + 1}`;
+          countParams.push(filters.smoking);
         }
 
         try {
           const countRes = await pecQuery(dynamicCountQuery, countParams);
           total = parseInt((countRes as any)?.[0]?.total || '0', 10);
         } catch (e) {
-          console.error('[RiskStratificationService] Precise dynamic count failed:', e);
-          total = 0;
+          console.error('[RiskStratificationService] Full dynamic count failed, using estimate:', e);
+          // Fallback: estimate from simple dedup count
+          try {
+            const fallbackParams = [...params];
+            const fallbackQuery = `
+              SELECT COUNT(DISTINCT COALESCE(c.nu_cpf, c.co_seq_cidadao::text)) as total
+              FROM tb_cidadao c
+              ${requiresVeJoin ? veJoin : ''}
+              WHERE c.dt_obito IS NULL AND c.st_ativo = 1
+                ${requiresVeJoin ? 'AND ve.st_saida_cadastro_territorio = 0 AND ve.st_saida_cadastro_obito = 0' : ''}
+                ${extraWhere}
+            `;
+            const fbRes = await pecQuery(fallbackQuery, fallbackParams);
+            total = parseInt((fbRes as any)?.[0]?.total || '0', 10);
+          } catch {
+            total = 0;
+          }
         }
       } else if (!extraWhere) {
         // Fast estimate for the entire database to avoid 20-second COUNT(*) scans
@@ -444,7 +543,10 @@ export class RiskStratificationService {
       // Data query
       const dataParams = [...params];
 
-      const cteAlreadyPaginated = !filters.riskLevel && (!filters.cids || filters.cids.length === 0) && filters.consultMonths === undefined;
+      const cteAlreadyPaginated = !filters.riskLevel 
+        && (!filters.cids || filters.cids.length === 0) 
+        && filters.consultMonths === undefined
+        && !filters.smoking;
 
       let fullQuery = `
         WITH CidadaosFiltradosAll AS (
@@ -473,62 +575,50 @@ export class RiskStratificationService {
             ORDER BY COALESCE(c.nu_cpf, c.co_seq_cidadao::text), c.dt_atualizado DESC, c.co_seq_cidadao DESC
         ),
         CidadaoFiltrado AS (
-            SELECT *,
-                CASE 
-                  WHEN nu_cpf IS NOT NULL THEN (
-                    SELECT array_agg(sibling.co_seq_cidadao) 
-                    FROM tb_cidadao sibling 
-                    WHERE sibling.nu_cpf = CidadaosFiltradosAll.nu_cpf 
-                      AND sibling.dt_obito IS NULL
-                      AND sibling.st_ativo = 1
-                  )
-                  ELSE ARRAY[co_seq_cidadao]
-                END AS all_co_seq_cidadaos
-            FROM CidadaosFiltradosAll
+            SELECT * FROM CidadaosFiltradosAll
             ORDER BY co_seq_cidadao ASC
             ${cteAlreadyPaginated ? `LIMIT ${pageSize} OFFSET ${offset}` : ''}
-        ),
-        PacientesBase AS (
-            SELECT 
-                cf.*,
-                (
-                    SELECT array_agg(p.co_seq_prontuario) 
-                    FROM tb_prontuario p 
-                    WHERE p.co_cidadao = ANY(cf.all_co_seq_cidadaos)
-                ) AS all_co_seq_prontuarios,
-                (
-                    SELECT array_agg(fcp.co_seq_fat_cidadao_pec) 
-                    FROM tb_fat_cidadao_pec fcp 
-                    WHERE fcp.co_cidadao = ANY(cf.all_co_seq_cidadaos)
-                ) AS all_co_seq_fat_cidadao_pecs,
-                (
-                   SELECT us.no_unidade_saude 
-                   FROM tb_prontuario_unidade_saude pus
-                   JOIN tb_unidade_saude us ON pus.co_unidade_saude = us.co_seq_unidade_saude
-                   WHERE pus.co_cidadao = ANY(cf.all_co_seq_cidadaos)
-                   ORDER BY pus.co_seq_prontuario_unidade_saud DESC
-                   LIMIT 1
-                ) AS no_unidade_saude,
-                (
-                   SELECT eq.no_equipe 
-                   FROM tb_cidadao_vinculacao_equipe ve
-                   JOIN tb_equipe eq ON ve.nu_ine = eq.nu_ine
-                   WHERE ve.co_cidadao = ANY(cf.all_co_seq_cidadaos)
-                   ORDER BY ve.co_seq_cidadao_vinculacao_eqp DESC
-                   LIMIT 1
-                ) AS no_equipe
-            FROM CidadaoFiltrado cf
         )
         SELECT *
         FROM (
             SELECT 
-                pb.co_seq_cidadao AS "ID",
-                pb.no_cidadao AS "Nome",
-                pb.no_sexo AS "Sexo",  
-                EXTRACT(YEAR FROM AGE(pb.dt_nascimento))::int AS "Idade",
-                pb.nu_micro_area AS "Microárea",
-                pb.no_unidade_saude AS "Unidade",
-                pb.no_equipe AS "Equipe",
+                cf.co_seq_cidadao AS "ID",
+                cf.no_cidadao AS "Nome",
+                cf.no_sexo AS "Sexo",  
+                EXTRACT(YEAR FROM AGE(cf.dt_nascimento))::int AS "Idade",
+                cf.nu_micro_area AS "Microárea",
+                -- Unidade de Saúde (UNION ALL para buscar irmãos por CPF)
+                (
+                    SELECT us.no_unidade_saude 
+                    FROM (
+                        SELECT pus.co_unidade_saude, pus.co_seq_prontuario_unidade_saud
+                        FROM tb_cidadao sibling
+                        JOIN tb_prontuario_unidade_saude pus ON pus.co_cidadao = sibling.co_seq_cidadao
+                        WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                        UNION ALL
+                        SELECT pus.co_unidade_saude, pus.co_seq_prontuario_unidade_saud
+                        FROM tb_prontuario_unidade_saude pus
+                        WHERE pus.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                    ) pus_all
+                    JOIN tb_unidade_saude us ON pus_all.co_unidade_saude = us.co_seq_unidade_saude
+                    ORDER BY pus_all.co_seq_prontuario_unidade_saud DESC LIMIT 1
+                ) AS "Unidade",
+                -- Equipe (UNION ALL para buscar irmãos por CPF)
+                (
+                    SELECT eq.no_equipe 
+                    FROM (
+                        SELECT ve2.nu_ine, ve2.co_seq_cidadao_vinculacao_eqp
+                        FROM tb_cidadao sibling
+                        JOIN tb_cidadao_vinculacao_equipe ve2 ON ve2.co_cidadao = sibling.co_seq_cidadao
+                        WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                        UNION ALL
+                        SELECT ve2.nu_ine, ve2.co_seq_cidadao_vinculacao_eqp
+                        FROM tb_cidadao_vinculacao_equipe ve2
+                        WHERE ve2.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                    ) ve_all
+                    JOIN tb_equipe eq ON ve_all.nu_ine = eq.nu_ine
+                    ORDER BY ve_all.co_seq_cidadao_vinculacao_eqp DESC LIMIT 1
+                ) AS "Equipe",
                 up.pressao AS "Última Pressão",
                 COALESCE(uw.peso, cr.peso_autorreferido) AS "Peso",
                 ua.altura AS "Altura",
@@ -546,13 +636,13 @@ export class RiskStratificationService {
                 cr.st_infarto AS "flag_infarto",
                 cr.st_derrame AS "flag_derrame",
                 CONCAT_WS(', ', 
-                  NULLIF(CONCAT_WS(' ', pb.ds_logradouro, pb.nu_numero), ''),
-                  NULLIF(pb.ds_complemento, ''),
-                  NULLIF(pb.no_bairro, ''),
-                  NULLIF(pb.ds_cep, '')
+                  NULLIF(CONCAT_WS(' ', cf.ds_logradouro, cf.nu_numero), ''),
+                  NULLIF(cf.ds_complemento, ''),
+                  NULLIF(cf.no_bairro, ''),
+                  NULLIF(cf.ds_cep, '')
                 ) AS "Endereço",
-                COALESCE(pb.nu_telefone_celular, pb.nu_telefone_contato, pb.nu_telefone_residencial) AS "Telefone",
-                pb.dt_atualizado AS "Atualizado Em",
+                COALESCE(cf.nu_telefone_celular, cf.nu_telefone_contato, cf.nu_telefone_residencial) AS "Telefone",
+                cf.dt_atualizado AS "Atualizado Em",
                 CASE 
                     WHEN cr.st_fumante = 1 THEN 'Sim'
                     WHEN cr.st_fumante = 0 THEN 'Não'
@@ -571,78 +661,138 @@ export class RiskStratificationService {
                     WHEN cr.st_hipertensao_arterial = 1 AND cr.st_diabetes = 1 THEN 'MEDIUM'
                     WHEN (COALESCE(uw.peso, cr.peso_autorreferido) IS NOT NULL AND ua.altura IS NOT NULL AND ua.altura > 0 AND (COALESCE(uw.peso, cr.peso_autorreferido)::numeric / POWER(ua.altura::numeric / 100, 2)) >= 30) THEN 'MEDIUM'
                     WHEN cr.st_hipertensao_arterial = 1 AND cr.st_fumante = 1 THEN 'MEDIUM'
-                    WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'MASCULINO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 55 THEN 'MEDIUM'
-                    WHEN cr.st_hipertensao_arterial = 1 AND pb.no_sexo = 'FEMININO' AND EXTRACT(YEAR FROM AGE(pb.dt_nascimento)) > 65 THEN 'MEDIUM'
+                    WHEN cr.st_hipertensao_arterial = 1 AND cf.no_sexo = 'MASCULINO' AND EXTRACT(YEAR FROM AGE(cf.dt_nascimento)) > 55 THEN 'MEDIUM'
+                    WHEN cr.st_hipertensao_arterial = 1 AND cf.no_sexo = 'FEMININO' AND EXTRACT(YEAR FROM AGE(cf.dt_nascimento)) > 65 THEN 'MEDIUM'
                     ELSE 'LOW'
                 END AS computed_risk
-            FROM PacientesBase pb
+            FROM CidadaoFiltrado cf
             
-            -- Condições de Saúde (Pegando a última ficha de cadastro individual preenchida)
+            -- Condições de Saúde (UNION ALL para buscar irmãos por CPF via índice)
             LEFT JOIN LATERAL (
                 SELECT 
                     st_fumante, st_hipertensao_arterial, st_diabetes, 
                     st_doenca_cardiaca, st_infarto, st_derrame, st_problema_rins,
                     peso_autorreferido
                 FROM tb_condicoes_saude_auto
-                WHERE co_cidadao = ANY(pb.all_co_seq_cidadaos)
+                WHERE co_cidadao IN (
+                    SELECT sibling.co_seq_cidadao FROM tb_cidadao sibling
+                    WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT cf.co_seq_cidadao WHERE cf.nu_cpf IS NULL
+                )
                 ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
             ) cr ON true
             
-            -- Última consulta (qualquer uma, mesmo sem sinais vitais, traz cids)
+            -- Última consulta (UNION ALL via fat_cidadao_pec)
             LEFT JOIN LATERAL (
                 SELECT TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_consulta,
                        fat.ds_filtro_cids,
                        fat.ds_filtro_ciaps
-                FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs)
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) uc ON true
             
-            -- Última Pressão (ignora consultas onde a pressão não foi medida)
+            -- Última Pressão (UNION ALL)
             LEFT JOIN LATERAL (
                 SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao
-                FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_pressao_sistolica IS NOT NULL
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fat.nu_pressao_sistolica IS NOT NULL
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) up ON true
             
-            -- Última Glicemia (ignora consultas onde não teve medição)
+            -- Última Glicemia (UNION ALL)
             LEFT JOIN LATERAL (
                 SELECT fat.nu_glicemia AS glicemia
-                FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_glicemia IS NOT NULL
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fat.nu_glicemia IS NOT NULL
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) ug ON true
             
-            -- Último Peso
+            -- Último Peso (UNION ALL)
             LEFT JOIN LATERAL (
                 SELECT fat.nu_peso AS peso
-                FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_peso IS NOT NULL
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fat.nu_peso IS NOT NULL
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) uw ON true
             
-            -- Última Altura
+            -- Última Altura (UNION ALL)
             LEFT JOIN LATERAL (
                 SELECT fat.nu_altura AS altura
-                FROM tb_fat_atendimento_individual fat
-                WHERE fat.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) AND fat.nu_altura IS NOT NULL
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fat.nu_altura IS NOT NULL
                 ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
             ) ua ON true
 
-            -- Última visita domiciliar
+            -- Última visita domiciliar (UNION ALL)
             LEFT JOIN LATERAL (
-                SELECT TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_visita FROM tb_fat_visita_domiciliar fvd
-                WHERE fvd.co_fat_cidadao_pec = ANY(pb.all_co_seq_fat_cidadao_pecs) ORDER BY (fvd.co_dim_tempo + 0) DESC LIMIT 1
+                SELECT TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_visita
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_visita_domiciliar fvd ON fvd.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                ORDER BY (fvd.co_dim_tempo + 0) DESC LIMIT 1
             ) uv ON true
 
-            -- HbA1c (com Optimization Fence)
+            -- HbA1c (UNION ALL via prontuário, com Optimization Fence)
             LEFT JOIN LATERAL (
                 SELECT hem.vl_hemoglobina_glicada 
                 FROM (
                     SELECT req.co_seq_exame_requisitado
-                    FROM tb_exame_requisitado req
-                    WHERE req.co_prontuario = ANY(pb.all_co_seq_prontuarios)
+                    FROM (
+                        SELECT p.co_seq_prontuario FROM tb_cidadao sibling
+                        JOIN tb_prontuario p ON p.co_cidadao = sibling.co_seq_cidadao
+                        WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                        UNION ALL
+                        SELECT p.co_seq_prontuario FROM tb_prontuario p
+                        WHERE p.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                    ) prons
+                    JOIN tb_exame_requisitado req ON req.co_prontuario = prons.co_seq_prontuario
                     ORDER BY req.co_seq_exame_requisitado DESC 
                     OFFSET 0
                 ) as safe_req
@@ -672,6 +822,11 @@ export class RiskStratificationService {
         const cidConditions = filters.cids.map((_: any, i: number) => `"CIDs Fat" LIKE $${dataParams.length + i + 1}`).join(' OR ');
         finalWhere += ` AND (${cidConditions})`;
         filters.cids.forEach((cid: string) => dataParams.push(`%${cid}%`));
+      }
+
+      if (filters.smoking) {
+        finalWhere += ` AND "Fumante" = $${dataParams.length + 1}`;
+        dataParams.push(filters.smoking);
       }
 
       fullQuery += finalWhere;

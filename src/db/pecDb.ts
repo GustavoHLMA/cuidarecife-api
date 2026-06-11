@@ -25,7 +25,7 @@ if (isPecConfigured) {
     password: process.env.SENHA_PEC,
     max: 15,
     idleTimeoutMillis: 15000,          // Descarta conexões inativas em 15s para renovar o pool
-    connectionTimeoutMillis: 5000,    // Se a VPN cair, falha rápido (5s) em vez de travar por 1 minuto
+    connectionTimeoutMillis: 15000,   // Aumentado para 15s para suportar a latência do handshake da VPN
     keepAlive: true,                  // Ativa TCP Keep-Alive
     keepAliveInitialDelayMillis: 10000 // Inicia teste de vida após 10s de inatividade
   });
@@ -36,7 +36,7 @@ if (isPecConfigured) {
     // Força read-only: qualquer INSERT/UPDATE/DELETE vai falhar
     client.query(`SET default_transaction_read_only = ON`);
     client.query(`SET search_path TO "${schema}"`);
-    client.query(`SET statement_timeout = 15000`); // Limita consultas a no máximo 15 segundos
+    client.query(`SET statement_timeout = 45000`); // Limita consultas a no máximo 45 segundos
   });
 
   pecPool.on('error', (err) => {
@@ -73,16 +73,16 @@ export async function pecQuery<T = any>(text: string, params?: any[]): Promise<T
       const start = Date.now();
       const result = await pecPool.query(text, params);
       const duration = Date.now() - start;
-      
+
       // AUDITORIA: log de acesso a dados PEC (sem dados sensíveis)
       console.log(`[PEC DB] [AUDIT] Query executada: ${result.rowCount} rows, ${duration}ms`);
-      
+
       return result.rows as T[];
     } catch (error: any) {
-      const isTransient = 
-        error.message?.includes('ETIMEDOUT') || 
-        error.message?.includes('timeout') || 
-        error.message?.includes('ECONNRESET') || 
+      const isTransient =
+        error.message?.includes('ETIMEDOUT') ||
+        error.message?.includes('timeout') ||
+        error.message?.includes('ECONNRESET') ||
         error.message?.includes('terminated unexpectedly') ||
         error.message?.includes('Connection terminated');
 
@@ -90,7 +90,7 @@ export async function pecQuery<T = any>(text: string, params?: any[]): Promise<T
         console.error('[PEC DB] Query fatal error:', error.message);
         throw error;
       }
-      
+
       console.warn(`[PEC DB] Erro de conexão (${error.message}). Tentando novamente... (${retries} tentativas restantes)`);
       retries--;
       // Delay progressivo: 1s, 2s, 3s...
