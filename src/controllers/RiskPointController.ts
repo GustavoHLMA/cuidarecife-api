@@ -21,12 +21,30 @@ class RiskPointController {
         orderBy: { createdAt: 'desc' },
       });
 
-      res.json(points);
+      // Buscar os nomes dos profissionais que criaram os pontos
+      const creatorIds = Array.from(new Set(points.map(p => p.createdBy).filter(Boolean))) as string[];
+      let professionals: Record<string, string> = {};
+      
+      if (creatorIds.length > 0) {
+        const profs = await prisma.professional.findMany({
+          where: { id: { in: creatorIds } },
+          select: { id: true, name: true },
+        });
+        professionals = profs.reduce((acc, p) => ({ ...acc, [p.id]: p.name }), {} as Record<string, string>);
+      }
+
+      const pointsWithCreator = points.map(p => ({
+        ...p,
+        creatorName: p.createdBy ? (professionals[p.createdBy] || 'Profissional') : null
+      }));
+
+      res.json(pointsWithCreator);
     } catch (error) {
       console.error('[RiskPoints] Error listing:', error);
       res.status(500).json({ error: 'Failed to fetch risk points' });
     }
   }
+
 
   /**
    * Cria um novo ponto de risco no mapa.
@@ -41,7 +59,7 @@ class RiskPointController {
         return;
       }
 
-      const validTypes = ['STAIRS', 'SLOPE', 'UNPAVED', 'FLOODING', 'OTHER'];
+      const validTypes = ['STAIRS', 'SLOPE', 'UNPAVED', 'FLOODING', 'RUBBLE', 'OTHER'];
       if (!validTypes.includes(type)) {
         res.status(400).json({ error: `type inválido. Use: ${validTypes.join(', ')}` });
         return;
@@ -118,6 +136,7 @@ class RiskPointController {
       res.status(500).json({ error: 'Failed to remove risk point' });
     }
   }
+
 }
 
 export default new RiskPointController();

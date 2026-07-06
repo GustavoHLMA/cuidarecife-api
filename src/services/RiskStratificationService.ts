@@ -135,7 +135,7 @@ export class RiskStratificationService {
       ...this.demenciaCids,
       ...this.peDiabeticoCids
     ];
-    
+
     if (patient.cids.some(cid => highRiskCids.some(h => cid.startsWith(h)))) {
       highRiskReasons.push("Comorbidade Clínica (CID)");
     }
@@ -288,8 +288,18 @@ export class RiskStratificationService {
       }
 
       if (filters.search) {
-        extraWhere += ` AND c.no_cidadao_filtro ILIKE $${params.length + 1}`;
-        params.push(`%${filters.search}%`);
+        if (filters.searchType === 'cpf') {
+          const cleanCpf = filters.search.replace(/\D/g, '');
+          extraWhere += ` AND c.nu_cpf LIKE $${params.length + 1}`;
+          params.push(`${cleanCpf}%`);
+        } else if (filters.searchType === 'cns') {
+          const cleanCns = filters.search.replace(/\D/g, '');
+          extraWhere += ` AND c.nu_cns LIKE $${params.length + 1}`;
+          params.push(`${cleanCns}%`);
+        } else {
+          extraWhere += ` AND c.no_cidadao_filtro ILIKE $${params.length + 1}`;
+          params.push(`%${filters.search}%`);
+        }
       }
 
       if (filters.sex) {
@@ -306,8 +316,8 @@ export class RiskStratificationService {
       let total = 0;
       const requiresVeJoin = (filters.ine && filters.ine !== 'all') || (filters.unidade && filters.unidade !== 'all');
 
-      const hasDynamicFilters = filters.riskLevel 
-        || (filters.cids && filters.cids.length > 0) 
+      const hasDynamicFilters = filters.riskLevel
+        || (filters.cids && filters.cids.length > 0)
         || (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths))
         || filters.smoking;
 
@@ -351,7 +361,13 @@ export class RiskStratificationService {
                       WHEN cr.st_fumante = 1 THEN 'Sim'
                       WHEN cr.st_fumante = 0 THEN 'Não'
                       ELSE 'Sem Registro'
-                  END AS "Fumante"
+                  END AS "Fumante",
+                  cr.st_hipertensao_arterial AS flag_has_c,
+                  cr.st_diabetes AS flag_dm_c,
+                  cr.st_doenca_cardiaca AS flag_cardiaca_c,
+                  cr.st_problema_rins AS flag_renal_c,
+                  cr.st_infarto AS flag_infarto_c,
+                  cr.st_derrame AS flag_derrame_c
               FROM CidadaosFiltradosAll cfa
 
               -- Condições de Saúde (UNION ALL para buscar irmãos por CPF via índice)
@@ -484,9 +500,30 @@ export class RiskStratificationService {
         }
 
         if (filters.cids && filters.cids.length > 0) {
-          const cidConditions = filters.cids.map((_: any, i: number) => `ds_filtro_cids LIKE $${countParams.length + i + 1}`).join(' OR ');
-          dynamicCountQuery += ` AND (${cidConditions})`;
-          filters.cids.forEach((cid: string) => countParams.push(`%${cid}%`));
+          // CIDs que mapeiam para flags usam APENAS flags (consistente com território)
+          // CIDs sem flag equivalente usam LIKE no ds_filtro_cids
+          const hasPfx = ['I10', 'I11', 'I12', 'I13', 'I15'];
+          const dmPfx = ['E10', 'E11', 'E12', 'E13', 'E14'];
+          const cardioPfx = ['I21', 'I22', 'I50', 'I60', 'I61', 'I62', 'I63', 'I64'];
+          const renalPfx = ['N18', 'N19'];
+          const allFlagPfx = [...hasPfx, ...dmPfx, ...cardioPfx, ...renalPfx];
+
+          const conditions: string[] = [];
+          if (filters.cids.some((c: string) => hasPfx.some(p => c.startsWith(p)))) conditions.push('flag_has_c = 1');
+          if (filters.cids.some((c: string) => dmPfx.some(p => c.startsWith(p)))) conditions.push('flag_dm_c = 1');
+          if (filters.cids.some((c: string) => cardioPfx.some(p => c.startsWith(p)))) conditions.push('(flag_cardiaca_c = 1 OR flag_infarto_c = 1 OR flag_derrame_c = 1)');
+          if (filters.cids.some((c: string) => renalPfx.some(p => c.startsWith(p)))) conditions.push('flag_renal_c = 1');
+
+          // CIDs que não mapeiam para nenhuma flag → LIKE
+          const unmappedCids = filters.cids.filter((c: string) => !allFlagPfx.some(p => c.startsWith(p)));
+          for (const cid of unmappedCids) {
+            conditions.push(`ds_filtro_cids LIKE $${countParams.length + 1}`);
+            countParams.push(`%${cid}%`);
+          }
+
+          if (conditions.length > 0) {
+            dynamicCountQuery += ` AND (${conditions.join(' OR ')})`;
+          }
         }
 
         if (filters.smoking) {
@@ -543,8 +580,8 @@ export class RiskStratificationService {
       // Data query
       const dataParams = [...params];
 
-      const cteAlreadyPaginated = !filters.riskLevel 
-        && (!filters.cids || filters.cids.length === 0) 
+      const cteAlreadyPaginated = !filters.riskLevel
+        && (!filters.cids || filters.cids.length === 0)
         && filters.consultMonths === undefined
         && !filters.smoking;
 
@@ -819,9 +856,30 @@ export class RiskStratificationService {
       }
 
       if (filters.cids && filters.cids.length > 0) {
-        const cidConditions = filters.cids.map((_: any, i: number) => `"CIDs Fat" LIKE $${dataParams.length + i + 1}`).join(' OR ');
-        finalWhere += ` AND (${cidConditions})`;
-        filters.cids.forEach((cid: string) => dataParams.push(`%${cid}%`));
+        // CIDs que mapeiam para flags usam APENAS flags (consistente com território)
+        // CIDs sem flag equivalente usam LIKE no "CIDs Fat"
+        const hasPfx = ['I10', 'I11', 'I12', 'I13', 'I15'];
+        const dmPfx = ['E10', 'E11', 'E12', 'E13', 'E14'];
+        const cardioPfx = ['I21', 'I22', 'I50', 'I60', 'I61', 'I62', 'I63', 'I64'];
+        const renalPfx = ['N18', 'N19'];
+        const allFlagPfx = [...hasPfx, ...dmPfx, ...cardioPfx, ...renalPfx];
+
+        const conditions: string[] = [];
+        if (filters.cids.some((c: string) => hasPfx.some(p => c.startsWith(p)))) conditions.push('"flag_has" = 1');
+        if (filters.cids.some((c: string) => dmPfx.some(p => c.startsWith(p)))) conditions.push('"flag_dm" = 1');
+        if (filters.cids.some((c: string) => cardioPfx.some(p => c.startsWith(p)))) conditions.push('("flag_cardiaca" = 1 OR "flag_infarto" = 1 OR "flag_derrame" = 1)');
+        if (filters.cids.some((c: string) => renalPfx.some(p => c.startsWith(p)))) conditions.push('"flag_renal" = 1');
+
+        // CIDs que não mapeiam para nenhuma flag → LIKE
+        const unmappedCids = filters.cids.filter((c: string) => !allFlagPfx.some(p => c.startsWith(p)));
+        for (const cid of unmappedCids) {
+          conditions.push(`"CIDs Fat" LIKE $${dataParams.length + 1}`);
+          dataParams.push(`%${cid}%`);
+        }
+
+        if (conditions.length > 0) {
+          finalWhere += ` AND (${conditions.join(' OR ')})`;
+        }
       }
 
       if (filters.smoking) {
@@ -935,7 +993,7 @@ export class RiskStratificationService {
    * Sem LATERAL JOINs pesados. Só endereço, condições e risco.
    * Limite de 500 pacientes. Filtro obrigatório por microárea ou INE.
    */
-  public async getMapPatients(filters: { microarea?: string; ine?: string; unidade?: string; condition?: string }): Promise<any[]> {
+  public async getMapPatients(filters: { microarea?: string; ine?: string; unidade?: string; condition?: string; urgent?: boolean }): Promise<any[]> {
     if (!isPecConfigured) {
       return this.getMapPatientsMock(filters);
     }
@@ -980,6 +1038,11 @@ export class RiskStratificationService {
       } else {
         // Default: both DM or HAS
         condWhere = " AND (cr.st_diabetes = 1 OR cr.st_hipertensao_arterial = 1)";
+      }
+
+      // Urgent filter — only patients with high-risk comorbidities
+      if (filters.urgent) {
+        condWhere += " AND (cr.st_doenca_cardiaca = 1 OR cr.st_problema_rins = 1 OR cr.st_infarto = 1 OR cr.st_derrame = 1)";
       }
 
       const limitIdx = params.length + 1;
@@ -1039,10 +1102,12 @@ export class RiskStratificationService {
           cr.st_diabetes AS "flag_dm",
           cr.st_doenca_cardiaca AS "flag_cardiaca",
           cr.st_problema_rins AS "flag_renal",
+          cr.st_infarto AS "flag_infarto",
+          cr.st_derrame AS "flag_derrame",
           COALESCE(cws.nu_telefone_celular, cws.nu_telefone_residencial, cws.nu_telefone_contato) AS "telefone"
         FROM CidadaoWithSiblings cws
         LEFT JOIN LATERAL (
-          SELECT st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca, st_problema_rins
+          SELECT st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca, st_problema_rins, st_infarto, st_derrame
           FROM tb_condicoes_saude_auto
           WHERE co_cidadao = ANY(cws.all_co_seq_cidadaos)
           ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
@@ -1067,6 +1132,8 @@ export class RiskStratificationService {
         dm: r.flag_dm === 1,
         cardiaca: r.flag_cardiaca === 1,
         renal: r.flag_renal === 1,
+        infarto: r.flag_infarto === 1,
+        derrame: r.flag_derrame === 1,
         telefone: r.telefone || null,
       }));
     } catch (error: any) {

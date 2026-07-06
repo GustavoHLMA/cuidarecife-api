@@ -63,16 +63,27 @@ class RiskStratificationController {
         cids = Array.isArray(req.query.cids)
           ? (req.query.cids as string[])
           : (req.query.cids as string).split(',');
+      } else if (req.query.comorbidades) {
+        const comList = Array.isArray(req.query.comorbidades)
+          ? (req.query.comorbidades as string[])
+          : (req.query.comorbidades as string).split(',');
+        cids = [];
+        if (comList.includes('has')) cids.push(...["I10", "I11", "I12", "I13", "I15"]);
+        if (comList.includes('dm')) cids.push(...["E10", "E11", "E12", "E13", "E14"]);
+        if (comList.includes('cardio')) cids.push(...["I21", "I22", "I50", "I60", "I61", "I62", "I63", "I64"]);
+        if (comList.includes('renal')) cids.push(...["N18", "N19"]);
       }
 
       const sex = req.query.sex as string | undefined;
       const smoking = req.query.smoking as string | undefined;
+      const searchType = req.query.searchType as string | undefined;
 
       const filters: any = {
         microarea,
         unidade,
         ine,
         search,
+        searchType,
         riskLevel,
         ageRange: ageMin !== undefined && ageMax !== undefined ? [ageMin, ageMax] as [number, number] : undefined,
         cids,
@@ -231,8 +242,10 @@ class RiskStratificationController {
         }
       }
 
+      const urgent = req.query.urgent === 'true';
+
       const patients = await riskStratificationService.getMapPatients({
-        microarea, ine, unidade, condition,
+        microarea, ine, unidade, condition, urgent,
       });
       res.json(patients);
     } catch (error) {
