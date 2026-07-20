@@ -946,6 +946,8 @@ export class RiskStratificationService {
           ultima_pa_diastolica: d ? parseInt(d, 10) : null,
           ultimo_hba1c: row['HbA1c'] ? parseFloat(row['HbA1c']) : null,
           glicemia_capilar: row['Glicemia Capilar'] ? parseInt(row['Glicemia Capilar'], 10) : null,
+          peso: row['Peso'] ? parseFloat(row['Peso']) : null,
+          altura: row['Altura'] ? parseFloat(row['Altura']) : null,
           imc: (row['Peso'] && row['Altura']) ? (parseFloat(row['Peso']) / Math.pow(parseFloat(row['Altura']) / 100, 2)) : null,
           flag_has: row['flag_has'],
           flag_dm: row['flag_dm'],

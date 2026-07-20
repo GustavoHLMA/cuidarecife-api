@@ -133,3 +133,21 @@ model RiskPoint {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 }
+
+// Classificação MACC (Modelo de Atenção às Condições Crônicas)
+// Armazena o resultado da classificação + dados completos do formulário como JSONB
+model MaccClassification {
+  id             String   @id @default(cuid())
+  pacienteId     String   // co_seq_fat_cidadao_pec do PEC (referência externa)
+  pacienteNome   String
+  pacienteIdade  Int
+  maccLevel      Int      // 1-5 (recalculado pelo backend)
+  formData       Json     // Todos os campos do formulário MACC como JSONB
+  classifiedBy   String?  // ID do profissional que classificou
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([pacienteId])
+  @@index([maccLevel])
+  @@index([createdAt])
+}

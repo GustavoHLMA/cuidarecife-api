@@ -17,6 +17,7 @@ import RiskStratificationRoutes from './RiskStratificationRoutes';
 import RiskPointRoutes from './RiskPointRoutes';
 import FeedbackRoutes from './FeedbackRoutes';
 import MobileFeedbackRoutes from './MobileFeedbackRoutes';
+import MaccRoutes from './MaccRoutes';
 
 // Public routes (sem autenticação)
 router.use('/auth', AuthRoutes);
@@ -34,6 +35,8 @@ router.route('/').get((_, res) => {
 // ============================================================
 router.use('/risk-stratification', authMiddleware, professionalAuthMiddleware, maxPageSizeMiddleware(50), RiskStratificationRoutes);
 router.use('/risk-points', authMiddleware, professionalAuthMiddleware, RiskPointRoutes);
+router.use('/macc', authMiddleware, professionalAuthMiddleware, MaccRoutes);
+
 
 // Protected routes (require JWT — any authenticated user)
 router.use('/vision', authMiddleware, VisionRoutes);
