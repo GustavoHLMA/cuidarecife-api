@@ -147,9 +147,9 @@ class MaccService {
       _count: { maccLevel: true },
     });
 
-    const total = stats.reduce((sum, s) => sum + s._count.maccLevel, 0);
+    const total = stats.reduce((sum: number, s: any) => sum + s._count.maccLevel, 0);
     const distribution = [1, 2, 3, 4, 5].map((level) => {
-      const found = stats.find((s) => s.maccLevel === level);
+      const found = stats.find((s: any) => s.maccLevel === level);
       const count = found ? found._count.maccLevel : 0;
       return {
         level,

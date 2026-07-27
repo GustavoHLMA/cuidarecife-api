@@ -5,8 +5,8 @@ import { z } from 'zod';
 // Validação do formulário MACC com Zod
 const maccFormSchema = z.object({
   patientName: z.string().min(1, 'Nome do paciente é obrigatório'),
-  age: z.number().int().min(1).max(130),
-  hasChronicCondition: z.boolean(),
+  age: z.coerce.number().int().min(1).max(130),
+  hasChronicCondition: z.boolean().default(false),
   chronicConditions: z.array(z.string()).default([]),
   conditionComplexity: z.enum(['none', 'low', 'medium', 'high', 'very_high']).default('low'),
   riskFactors: z.array(z.string()).default([]),
@@ -17,7 +17,7 @@ const maccFormSchema = z.object({
   multipleComorbidities: z.boolean().default(false),
   controlledCondition: z.boolean().default(true),
   selfCareStatus: z.enum(['sufficient', 'insufficient', 'not_assessed']).default('not_assessed'),
-  selfCareScore: z.number().optional(),
+  selfCareScore: z.coerce.number().optional(),
 });
 
 const classifySchema = z.object({
@@ -34,6 +34,7 @@ class MaccController {
     try {
       const parsed = classifySchema.safeParse(req.body);
       if (!parsed.success) {
+        console.error('[MaccController] Zod validation failed:', JSON.stringify(parsed.error.flatten().fieldErrors));
         res.status(400).json({
           error: 'Dados inválidos',
           details: parsed.error.flatten().fieldErrors,
@@ -52,8 +53,8 @@ class MaccController {
 
       res.status(201).json(result);
     } catch (error: any) {
-      console.error('[MaccController] classify error:', error.message);
-      res.status(500).json({ error: 'Erro ao classificar paciente' });
+      console.error('[MaccController] classify error:', error.message || error);
+      res.status(500).json({ error: 'Erro ao classificar paciente', details: error.message });
     }
   }
 

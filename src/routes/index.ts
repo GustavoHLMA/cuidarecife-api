@@ -31,9 +31,9 @@ router.route('/').get((_, res) => {
 // ============================================================
 // DADOS PEC-eSUS: acesso RESTRITO a profissionais autenticados
 // SEGURANÇA: professionalAuthMiddleware bloqueia usuários do app mobile
-// maxPageSizeMiddleware(50) impede data dumps via pageSize grande
+// maxPageSizeMiddleware(200) impede data dumps via pageSize grande
 // ============================================================
-router.use('/risk-stratification', authMiddleware, professionalAuthMiddleware, maxPageSizeMiddleware(50), RiskStratificationRoutes);
+router.use('/risk-stratification', authMiddleware, professionalAuthMiddleware, maxPageSizeMiddleware(200), RiskStratificationRoutes);
 router.use('/risk-points', authMiddleware, professionalAuthMiddleware, RiskPointRoutes);
 router.use('/macc', authMiddleware, professionalAuthMiddleware, MaccRoutes);
 

@@ -6,7 +6,7 @@ import { Request, Response, NextFunction } from 'express';
  * 
  * Se o pageSize do request exceder o máximo, ele é silenciosamente truncado.
  */
-export function maxPageSizeMiddleware(maxSize: number = 50) {
+export function maxPageSizeMiddleware(maxSize: number = 200) {
   return (req: Request, _res: Response, next: NextFunction): void => {
     if (req.query.pageSize) {
       const requested = parseInt(req.query.pageSize as string, 10);

@@ -30,6 +30,7 @@ export interface PatientMock {
   // Datas de acompanhamento
   data_ultima_consulta: string | null; // ISO Date String
   data_ultima_visita_domiciliar: string | null;
+  macc_level?: number | null;
 
   // Medicações
   lista_prescricao: string[];

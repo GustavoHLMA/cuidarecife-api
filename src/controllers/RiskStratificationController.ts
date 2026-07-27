@@ -57,6 +57,7 @@ class RiskStratificationController {
       const ageMin = req.query.ageMin ? parseInt(req.query.ageMin as string, 10) : undefined;
       const ageMax = req.query.ageMax ? parseInt(req.query.ageMax as string, 10) : undefined;
       const consultMonths = req.query.consultMonths ? parseInt(req.query.consultMonths as string, 10) : undefined;
+      const footExam = req.query.footExam as string | undefined;
       
       let cids: string[] | undefined;
       if (req.query.cids) {
@@ -88,6 +89,7 @@ class RiskStratificationController {
         ageRange: ageMin !== undefined && ageMax !== undefined ? [ageMin, ageMax] as [number, number] : undefined,
         cids,
         consultMonths,
+        footExam,
         sex,
         smoking,
       };

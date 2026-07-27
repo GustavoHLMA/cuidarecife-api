@@ -1,5 +1,6 @@
 import { mockPatients, PatientMock } from '../mocks/patientsMock';
 import { pecQuery, isPecConfigured } from '../db/pecDb';
+import prisma from '../db';
 
 export enum RiskLevel {
   HIGH = 'HIGH',
@@ -319,9 +320,10 @@ export class RiskStratificationService {
       const hasDynamicFilters = filters.riskLevel
         || (filters.cids && filters.cids.length > 0)
         || (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths))
+        || filters.footExam
         || filters.smoking;
 
-      if (hasDynamicFilters && extraWhere) {
+      if (hasDynamicFilters) {
         // Full-precision count: uses UNION ALL scalar lookups in LATERAL JOINs
         // to compute risk from vitals (pressure, glucose, HbA1c, BMI) without arrays.
         // UNION ALL allows PostgreSQL to use indexes efficiently for sibling lookups.
@@ -356,6 +358,8 @@ export class RiskStratificationService {
                       ELSE 'LOW'
                   END AS computed_risk,
                   uc.data_ultima_consulta,
+                  uv.data_ultima_visita,
+                  uep.data_ultimo_exame_pe,
                   uc.ds_filtro_cids,
                   CASE 
                       WHEN cr.st_fumante = 1 THEN 'Sim'
@@ -398,6 +402,37 @@ export class RiskStratificationService {
                   JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
                   ORDER BY (fat.co_dim_tempo + 0) DESC LIMIT 1
               ) uc ON true
+
+              -- Última Visita Domiciliar (UNION ALL)
+              LEFT JOIN LATERAL (
+                  SELECT TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_visita
+                  FROM (
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                      JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                      WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                      UNION ALL
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                      WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                  ) ids
+                  JOIN tb_fat_visita_domiciliar fvd ON fvd.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                  ORDER BY (fvd.co_dim_tempo + 0) DESC LIMIT 1
+              ) uv ON true
+
+              -- Último Exame do Pé
+              LEFT JOIN LATERAL (
+                  SELECT TO_DATE(fpa.co_dim_tempo::text, 'YYYYMMDD') AS data_ultimo_exame_pe
+                  FROM (
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                      JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                      WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                      UNION ALL
+                      SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                      WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                  ) ids
+                  JOIN tb_fat_proced_atend_proced fpa ON fpa.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                  WHERE fpa.co_dim_procedimento = 7478
+                  ORDER BY (fpa.co_dim_tempo + 0) DESC LIMIT 1
+              ) uep ON true
 
               -- Última Pressão (UNION ALL)
               LEFT JOIN LATERAL (
@@ -495,8 +530,14 @@ export class RiskStratificationService {
         }
 
         if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
-          dynamicCountQuery += ` AND (data_ultima_consulta IS NULL OR data_ultima_consulta < NOW() - ($${countParams.length + 1} || ' months')::interval)`;
+          dynamicCountQuery += ` AND ((data_ultima_consulta IS NULL OR data_ultima_consulta < NOW() - ($${countParams.length + 1} || ' months')::interval) AND (data_ultima_visita IS NULL OR data_ultima_visita < NOW() - ($${countParams.length + 1} || ' months')::interval))`;
           countParams.push(filters.consultMonths);
+        }
+
+        if (filters.footExam === 'with') {
+          dynamicCountQuery += ` AND data_ultimo_exame_pe IS NOT NULL`;
+        } else if (filters.footExam === 'without') {
+          dynamicCountQuery += ` AND data_ultimo_exame_pe IS NULL`;
         }
 
         if (filters.cids && filters.cids.length > 0) {
@@ -583,6 +624,7 @@ export class RiskStratificationService {
       const cteAlreadyPaginated = !filters.riskLevel
         && (!filters.cids || filters.cids.length === 0)
         && filters.consultMonths === undefined
+        && !filters.footExam
         && !filters.smoking;
 
       let fullQuery = `
@@ -664,6 +706,7 @@ export class RiskStratificationService {
                 uh.vl_hemoglobina_glicada AS "HbA1c",
                 uc.data_ultima_consulta AS "Última Consulta",
                 uv.data_ultima_visita AS "Última Visita Domiciliar",
+                uep.data_ultimo_exame_pe AS "Último Exame Pé",
                 uc.ds_filtro_cids AS "CIDs Fat",
                 uc.ds_filtro_ciaps AS "CIAPs Fat",
                 cr.st_hipertensao_arterial AS "flag_has",
@@ -816,6 +859,22 @@ export class RiskStratificationService {
                 ORDER BY (fvd.co_dim_tempo + 0) DESC LIMIT 1
             ) uv ON true
 
+            -- Último Exame do Pé (Procedimento SIGTAP 0301040095 - co_dim_procedimento = 7478)
+            LEFT JOIN LATERAL (
+                SELECT TO_DATE(fpa.co_dim_tempo::text, 'YYYYMMDD') AS data_ultimo_exame_pe
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cf.nu_cpf AND cf.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cf.co_seq_cidadao AND cf.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_proced_atend_proced fpa ON fpa.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fpa.co_dim_procedimento = 7478
+                ORDER BY (fpa.co_dim_tempo + 0) DESC LIMIT 1
+            ) uep ON true
+
             -- HbA1c (UNION ALL via prontuário, com Optimization Fence)
             LEFT JOIN LATERAL (
                 SELECT hem.vl_hemoglobina_glicada 
@@ -851,8 +910,14 @@ export class RiskStratificationService {
       }
 
       if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
-        finalWhere += ` AND ("Última Consulta" IS NULL OR "Última Consulta" < NOW() - ($${dataParams.length + 1} || ' months')::interval)`;
+        finalWhere += ` AND (("Última Consulta" IS NULL OR "Última Consulta" < NOW() - ($${dataParams.length + 1} || ' months')::interval) AND ("Última Visita Domiciliar" IS NULL OR "Última Visita Domiciliar" < NOW() - ($${dataParams.length + 1} || ' months')::interval))`;
         dataParams.push(filters.consultMonths);
+      }
+
+      if (filters.footExam === 'with') {
+        finalWhere += ` AND "Último Exame Pé" IS NOT NULL`;
+      } else if (filters.footExam === 'without') {
+        finalWhere += ` AND "Último Exame Pé" IS NULL`;
       }
 
       if (filters.cids && filters.cids.length > 0) {
@@ -895,6 +960,25 @@ export class RiskStratificationService {
 
       const rows = await pecQuery(fullQuery, dataParams);
       if (!rows) throw new Error('Query failed');
+
+      let maccMap: Record<string, number> = {};
+      try {
+        const patientIds = rows.map((r: any) => `pec-${r['ID']}`);
+        const rawIds = rows.map((r: any) => String(r['ID']));
+        const allIds = Array.from(new Set([...patientIds, ...rawIds]));
+
+        const maccs = await (prisma as any).maccClassification.findMany({
+          where: { pacienteId: { in: allIds } },
+          orderBy: { createdAt: 'desc' },
+        });
+        for (const m of maccs) {
+          if (!maccMap[m.pacienteId]) {
+            maccMap[m.pacienteId] = m.maccLevel;
+          }
+        }
+      } catch (e) {
+        // Silencioso se conexão Prisma/tabela MACC não estiver pronta
+      }
 
       const patients = rows.map((row: any) => {
         const paStr = row['Última Pressão'] || "";
@@ -960,6 +1044,7 @@ export class RiskStratificationService {
           telefone: row['Telefone'] || null,
           data_ultimo_exame_pe: row['Último Exame Pé'] || null,
           dt_atualizado: row['Atualizado Em'] || null,
+          macc_level: maccMap[`pec-${row['ID']}`] || maccMap[String(row['ID'])] || null,
         } as any;
         return this.stratifySinglePatient(p);
       });
@@ -975,7 +1060,35 @@ export class RiskStratificationService {
   }
 
   private getStratifiedPaginatedMock(page: number, pageSize: number, filters: any) {
-    const list = this.stratifyPatients(filters.microarea);
+    let list = this.stratifyPatients(filters.microarea);
+
+    if (filters.riskLevel) {
+      const levels = filters.riskLevel.split(',');
+      list = list.filter(p => levels.includes(p.risk_level));
+    }
+
+    if (filters.consultMonths) {
+      const cutoff = new Date();
+      cutoff.setMonth(cutoff.getMonth() - filters.consultMonths);
+      list = list.filter(p => {
+        const consultDate = p.data_ultima_consulta ? new Date(p.data_ultima_consulta) : null;
+        const visitDate = (p as any).data_ultima_visita_domiciliar ? new Date((p as any).data_ultima_visita_domiciliar) : null;
+        const consultOld = !consultDate || consultDate < cutoff;
+        const visitOld = !visitDate || visitDate < cutoff;
+        return consultOld && visitOld;
+      });
+    }
+
+    if (filters.footExam === 'with') {
+      list = list.filter(p => Boolean((p as any).data_ultimo_exame_pe));
+    } else if (filters.footExam === 'without') {
+      list = list.filter(p => !(p as any).data_ultimo_exame_pe);
+    }
+
+    if (filters.smoking) {
+      list = list.filter(p => p.fumante === filters.smoking);
+    }
+
     const start = (page - 1) * pageSize;
     return {
       data: list.slice(start, start + pageSize),
@@ -1106,7 +1219,9 @@ export class RiskStratificationService {
           cr.st_problema_rins AS "flag_renal",
           cr.st_infarto AS "flag_infarto",
           cr.st_derrame AS "flag_derrame",
-          COALESCE(cws.nu_telefone_celular, cws.nu_telefone_residencial, cws.nu_telefone_contato) AS "telefone"
+          COALESCE(cws.nu_telefone_celular, cws.nu_telefone_residencial, cws.nu_telefone_contato) AS "telefone",
+          COALESCE(geo1.nu_latitude, geo2.nu_latitude) AS "lat",
+          COALESCE(geo1.nu_longitude, geo2.nu_longitude) AS "lng"
         FROM CidadaoWithSiblings cws
         LEFT JOIN LATERAL (
           SELECT st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca, st_problema_rins, st_infarto, st_derrame
@@ -1114,6 +1229,30 @@ export class RiskStratificationService {
           WHERE co_cidadao = ANY(cws.all_co_seq_cidadaos)
           ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
         ) cr ON true
+        -- Busca 1: Cadastro Domiciliar Familiar
+        LEFT JOIN LATERAL (
+          SELECT fcd.nu_latitude, fcd.nu_longitude
+          FROM tb_fat_cidadao_pec fcp
+          JOIN tb_fat_cad_dom_familia fam ON fam.co_fat_cidadao_pec = fcp.co_seq_fat_cidadao_pec
+          JOIN tb_fat_cad_domiciliar fcd ON fcd.co_seq_fat_cad_domiciliar = fam.co_fat_cad_domiciliar
+          WHERE fcp.co_cidadao = ANY(cws.all_co_seq_cidadaos)
+            AND fcd.nu_latitude IS NOT NULL
+            AND fcd.nu_longitude IS NOT NULL
+          ORDER BY (fcd.co_dim_tempo + 0) DESC
+          LIMIT 1
+        ) geo1 ON true
+        -- Busca 2: Família Território
+        LEFT JOIN LATERAL (
+          SELECT fcd.nu_latitude, fcd.nu_longitude
+          FROM tb_fat_cidadao_pec fcp
+          JOIN tb_fat_familia_territorio ft ON ft.co_fat_cidadao_pec = fcp.co_seq_fat_cidadao_pec
+          JOIN tb_fat_cad_domiciliar fcd ON fcd.co_seq_fat_cad_domiciliar = ft.co_fat_cad_domiciliar
+          WHERE fcp.co_cidadao = ANY(cws.all_co_seq_cidadaos)
+            AND fcd.nu_latitude IS NOT NULL
+            AND fcd.nu_longitude IS NOT NULL
+          ORDER BY (fcd.co_dim_tempo + 0) DESC
+          LIMIT 1
+        ) geo2 ON true
         WHERE 1=1
           ${condWhere}
         LIMIT $${limitIdx}
@@ -1137,6 +1276,9 @@ export class RiskStratificationService {
         infarto: r.flag_infarto === 1,
         derrame: r.flag_derrame === 1,
         telefone: r.telefone || null,
+        lat: r.lat ? parseFloat(r.lat) : undefined,
+        lng: r.lng ? parseFloat(r.lng) : undefined,
+        isExactGps: !!(r.lat && r.lng),
       }));
     } catch (error: any) {
       console.error('[MapPatients] DB Error:', error.message);
@@ -1275,7 +1417,9 @@ export class RiskStratificationService {
               -- Peso/Altura nos últimos 12 meses
               (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.nu_peso IS NOT NULL AND f.nu_altura IS NOT NULL AND TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '12 months' LIMIT 1) AS has_peso_altura,
               -- HbA1c nos últimos 12 meses
-              (SELECT 1 FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado WHERE req.co_prontuario = ANY(tcw.all_co_seq_prontuarios) LIMIT 1) AS has_hba1c
+              (SELECT 1 FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado WHERE req.co_prontuario = ANY(tcw.all_co_seq_prontuarios) LIMIT 1) AS has_hba1c,
+              -- Exame do Pé nos últimos 12 meses (SIGTAP 0301040095 - co_dim_procedimento = 7478)
+              (SELECT 1 FROM tb_fat_proced_atend_proced fpa WHERE fpa.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fpa.co_dim_procedimento = 7478 AND TO_DATE(fpa.co_dim_tempo::text, 'YYYYMMDD') >= NOW() - INTERVAL '12 months' LIMIT 1) AS has_exame_pes
             FROM TargetCidadaosWithPECs tcw
             LEFT JOIN LATERAL (
               SELECT st_hipertensao_arterial, st_diabetes, st_infarto, st_derrame, st_doenca_cardiaca, st_problema_rins
@@ -1306,7 +1450,7 @@ export class RiskStratificationService {
             COUNT(*) FILTER (WHERE is_dm = 1 AND has_pa_6m = 1) AS dm_pa_6m,
             COUNT(*) FILTER (WHERE is_dm = 1 AND has_peso_altura = 1) AS dm_peso_altura,
             COUNT(*) FILTER (WHERE is_dm = 1 AND has_hba1c = 1) AS dm_hba1c,
-            0 AS dm_exame_pes,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND has_exame_pes = 1) AS dm_exame_pes,
             COUNT(*) FILTER (WHERE is_dm = 1 AND has_visita_12m = 1) AS dm_visita_12m
           FROM Classified
         `;
