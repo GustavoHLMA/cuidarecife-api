@@ -78,6 +78,8 @@ class RiskStratificationController {
       const sex = req.query.sex as string | undefined;
       const smoking = req.query.smoking as string | undefined;
       const searchType = req.query.searchType as string | undefined;
+      const quarter = req.query.quarter as string | undefined;
+      const cutoffDate = req.query.cutoffDate as string | undefined;
 
       const filters: any = {
         microarea,
@@ -92,6 +94,8 @@ class RiskStratificationController {
         footExam,
         sex,
         smoking,
+        quarter,
+        cutoffDate,
       };
 
       const result = await riskStratificationService.getStratifiedPaginated(page, pageSize, filters);
@@ -102,7 +106,31 @@ class RiskStratificationController {
     }
   }
 
+  public async getHistoricalIndicatorsEvolution(req: Request, res: Response): Promise<void> {
+    try {
+      const ine = req.query.ine as string | undefined;
+      const microarea = req.query.microarea as string | undefined;
+      const data = await riskStratificationService.getHistoricalIndicatorsEvolution(ine, microarea);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching historical indicators evolution:', error);
+      res.status(500).json({ error: 'Failed to fetch historical indicators evolution' });
+    }
+  }
+
+  public async getPatientSoapHistory(req: Request, res: Response): Promise<void> {
+    try {
+      const { id } = req.params;
+      const data = await riskStratificationService.getPatientSoapHistory(id);
+      res.json(data);
+    } catch (error) {
+      console.error('Error fetching patient SOAP history:', error);
+      res.status(500).json({ error: 'Failed to fetch patient SOAP history' });
+    }
+  }
+
   public getDiabetics(req: Request, res: Response): void {
+
     const { microarea } = req.query;
     const data = riskStratificationService.getDiabeticPatients(microarea as string | undefined);
     res.json(data);
@@ -194,13 +222,17 @@ class RiskStratificationController {
           microarea = allowed.length > 0 ? allowed.join(',') : user.microareas.join(',');
         }
       }
-      const stats = await riskStratificationService.getTerritoryStats(microarea, unidade, ine);
+      const quarter = req.query.quarter as string | undefined;
+      const startDate = req.query.startDate as string | undefined;
+      const endDate = req.query.endDate as string | undefined;
+      const stats = await riskStratificationService.getTerritoryStats(microarea, unidade, ine, quarter, startDate, endDate);
       res.json(stats);
     } catch (error) {
       console.error('Error fetching territory stats:', error);
       res.status(500).json({ error: 'Failed to fetch territory statistics' });
     }
   }
+
 
   public async getMapPatients(req: Request, res: Response): Promise<void> {
     try {
@@ -245,14 +277,29 @@ class RiskStratificationController {
       }
 
       const urgent = req.query.urgent === 'true';
+      const searchName = req.query.searchName as string | undefined;
+      const searchType = req.query.searchType as string | undefined;
 
       const patients = await riskStratificationService.getMapPatients({
-        microarea, ine, unidade, condition, urgent,
+        microarea, ine, unidade, condition, urgent, searchName, searchType,
       });
       res.json(patients);
     } catch (error) {
       console.error('Error fetching map patients:', error);
       res.status(500).json({ error: 'Failed to fetch map patients' });
+    }
+  }
+
+  public async getGlobalBenchmarks(req: Request, res: Response): Promise<void> {
+    try {
+      const quarter = req.query.quarter as string | undefined;
+      const startDate = req.query.startDate as string | undefined;
+      const endDate = req.query.endDate as string | undefined;
+      const benchmarks = await riskStratificationService.getGlobalBenchmarks(quarter);
+      res.json(benchmarks);
+    } catch (error) {
+      console.error('Error fetching global benchmarks:', error);
+      res.status(500).json({ error: 'Failed to fetch global benchmarks' });
     }
   }
 

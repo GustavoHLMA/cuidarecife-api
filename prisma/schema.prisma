@@ -151,3 +151,27 @@ model MaccClassification {
   @@index([maccLevel])
   @@index([createdAt])
 }
+
+// Snapshots de Indicadores e Estratificação de Risco por Equipe/Período
+model TeamIndicatorSnapshot {
+  id            String   @id @default(cuid())
+  ine           String   // INE da equipe
+  period        String   // Ex: "2025-Q1", "2025-Q2", "2025-Q3", "2025-Q4", "2026-Q1"
+  startDate     DateTime
+  endDate       DateTime
+  totalPatients Int
+  highRiskCount Int
+  medRiskCount  Int
+  lowRiskCount  Int
+  c4Percentage  Float    // % Hipertensos c/ PA em dia (C4)
+  c5Percentage  Float    // % Diabéticos c/ HbA1c solicitada/avaliada (C5)
+  footExamRate  Float    // % Diabéticos c/ Exame de Pé realizado
+  snapshotData  Json     // Dados detalhados e estatísticas adicionais
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([ine, period])
+  @@index([ine])
+  @@index([period])
+}
+
