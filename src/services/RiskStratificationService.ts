@@ -273,7 +273,7 @@ export class RiskStratificationService {
 
       return {
         ...patient,
-        risk_level: riskLevel,
+        risk_level: (patient as any).raw_computed_risk ? ((patient as any).raw_computed_risk as RiskLevel) : riskLevel,
         reason,
         recommended_action: action,
         return_deadline: deadline,
@@ -337,7 +337,7 @@ export class RiskStratificationService {
 
       return {
         ...patient,
-        risk_level: riskLevel,
+        risk_level: (patient as any).raw_computed_risk ? ((patient as any).raw_computed_risk as RiskLevel) : riskLevel,
         reason,
         recommended_action: action,
         return_deadline: deadline,
@@ -382,7 +382,7 @@ export class RiskStratificationService {
 
       return {
         ...patient,
-        risk_level: riskLevel,
+        risk_level: (patient as any).raw_computed_risk ? ((patient as any).raw_computed_risk as RiskLevel) : riskLevel,
         reason,
         recommended_action: action,
         return_deadline: deadline,
@@ -433,7 +433,7 @@ export class RiskStratificationService {
 
       return {
         ...patient,
-        risk_level: riskLevel,
+        risk_level: (patient as any).raw_computed_risk ? ((patient as any).raw_computed_risk as RiskLevel) : riskLevel,
         reason,
         recommended_action: action,
         return_deadline: deadline,
@@ -468,7 +468,7 @@ export class RiskStratificationService {
 
     return {
       ...patient,
-      risk_level: riskLevel,
+      risk_level: (patient as any).raw_computed_risk ? ((patient as any).raw_computed_risk as RiskLevel) : riskLevel,
       reason,
       recommended_action: action,
       return_deadline: deadline,
@@ -818,16 +818,11 @@ export class RiskStratificationService {
         `;
 
         if (filters.riskLevel) {
-          if (filters.riskLevel === 'INDIVIDUALIZED_ELDERLY') {
-            dynamicCountQuery += ` AND EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento_raw)) >= 75`;
-          } else if (filters.riskLevel === 'INDIVIDUALIZED_YOUNG') {
-            dynamicCountQuery += ` AND EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento_raw)) < 40`;
-          } else {
-            const levels = filters.riskLevel.split(',');
-            const placeholders = levels.map((_: any, i: number) => `$${countParams.length + i + 1}`);
-            dynamicCountQuery += ` AND computed_risk IN (${placeholders.join(',')})`;
-            countParams.push(...levels);
-          }
+          const levels = filters.riskLevel.split(',');
+          if (levels.includes('LOW')) levels.push('VERY_LOW');
+          const placeholders = levels.map((_: any, i: number) => `$${countParams.length + i + 1}`);
+          dynamicCountQuery += ` AND computed_risk IN (${placeholders.join(',')})`;
+          countParams.push(...levels);
         }
 
         if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
@@ -1295,16 +1290,11 @@ export class RiskStratificationService {
 
       // Aplicar filtros que dependem do LATERAL ou de agrupamentos no resultado final
       if (filters.riskLevel) {
-        if (filters.riskLevel === 'INDIVIDUALIZED_ELDERLY') {
-          finalWhere += ` AND "Idade" >= 75`;
-        } else if (filters.riskLevel === 'INDIVIDUALIZED_YOUNG') {
-          finalWhere += ` AND "Idade" < 40`;
-        } else {
-          const levels = filters.riskLevel.split(',');
-          const placeholders = levels.map((_: any, i: number) => `$${dataParams.length + i + 1}`);
-          finalWhere += ` AND computed_risk IN (${placeholders.join(',')})`;
-          dataParams.push(...levels);
-        }
+        const levels = filters.riskLevel.split(',');
+        if (levels.includes('LOW')) levels.push('VERY_LOW');
+        const placeholders = levels.map((_: any, i: number) => `$${dataParams.length + i + 1}`);
+        finalWhere += ` AND computed_risk IN (${placeholders.join(',')})`;
+        dataParams.push(...levels);
       }
 
       if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
@@ -1447,6 +1437,7 @@ export class RiskStratificationService {
           data_ultimo_exame_pe: row['Último Exame Pé'] || null,
           dt_atualizado: row['Atualizado Em'] || null,
           macc_level: maccMap[`pec-${row['ID']}`] || maccMap[String(row['ID'])] || null,
+          raw_computed_risk: row['computed_risk'],
         } as any;
         return this.stratifySinglePatient(p);
       });
