@@ -579,6 +579,7 @@ export class RiskStratificationService {
       }
 
       if (filters.search) {
+        const normalizedSearch = filters.search.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         if (filters.searchType === 'cpf') {
           const cleanCpf = filters.search.replace(/\D/g, '');
           extraWhere += ` AND c.nu_cpf LIKE $${params.length + 1}`;
@@ -588,8 +589,8 @@ export class RiskStratificationService {
           extraWhere += ` AND c.nu_cns LIKE $${params.length + 1}`;
           params.push(`${cleanCns}%`);
         } else {
-          extraWhere += ` AND c.no_cidadao_filtro ILIKE $${params.length + 1}`;
-          params.push(`%${filters.search}%`);
+          extraWhere += ` AND translate(lower(c.no_cidadao_filtro), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') ILIKE $${params.length + 1}`;
+          params.push(`%${normalizedSearch}%`);
         }
       }
 
@@ -632,6 +633,7 @@ export class RiskStratificationService {
           ),
           ComputedPatients AS (
               SELECT 
+                  cfa.dt_nascimento AS dt_nascimento_raw,
                   CASE 
                       WHEN cr.st_infarto = 1 OR cr.st_derrame = 1 OR cr.st_doenca_cardiaca = 1 THEN 'VERY_HIGH'
                       WHEN (up.pressao_s IS NOT NULL AND up.pressao_s >= 180) OR (up.pressao_d IS NOT NULL AND up.pressao_d >= 110) THEN 'VERY_HIGH'
@@ -816,10 +818,16 @@ export class RiskStratificationService {
         `;
 
         if (filters.riskLevel) {
-          const levels = filters.riskLevel.split(',');
-          const placeholders = levels.map((_: any, i: number) => `$${countParams.length + i + 1}`);
-          dynamicCountQuery += ` AND computed_risk IN (${placeholders.join(',')})`;
-          countParams.push(...levels);
+          if (filters.riskLevel === 'INDIVIDUALIZED_ELDERLY') {
+            dynamicCountQuery += ` AND EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento_raw)) >= 75`;
+          } else if (filters.riskLevel === 'INDIVIDUALIZED_YOUNG') {
+            dynamicCountQuery += ` AND EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento_raw)) < 40`;
+          } else {
+            const levels = filters.riskLevel.split(',');
+            const placeholders = levels.map((_: any, i: number) => `$${countParams.length + i + 1}`);
+            dynamicCountQuery += ` AND computed_risk IN (${placeholders.join(',')})`;
+            countParams.push(...levels);
+          }
         }
 
         if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
@@ -1287,10 +1295,16 @@ export class RiskStratificationService {
 
       // Aplicar filtros que dependem do LATERAL ou de agrupamentos no resultado final
       if (filters.riskLevel) {
-        const levels = filters.riskLevel.split(',');
-        const placeholders = levels.map((_: any, i: number) => `$${dataParams.length + i + 1}`);
-        finalWhere += ` AND computed_risk IN (${placeholders.join(',')})`;
-        dataParams.push(...levels);
+        if (filters.riskLevel === 'INDIVIDUALIZED_ELDERLY') {
+          finalWhere += ` AND "Idade" >= 75`;
+        } else if (filters.riskLevel === 'INDIVIDUALIZED_YOUNG') {
+          finalWhere += ` AND "Idade" < 40`;
+        } else {
+          const levels = filters.riskLevel.split(',');
+          const placeholders = levels.map((_: any, i: number) => `$${dataParams.length + i + 1}`);
+          finalWhere += ` AND computed_risk IN (${placeholders.join(',')})`;
+          dataParams.push(...levels);
+        }
       }
 
       if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
@@ -1643,6 +1657,7 @@ list = list.filter(p => p.fumante === filters.smoking);
 
       // Search name/cpf/cns filter
       if (filters.searchName) {
+        const normalizedSearch = filters.searchName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
         if (filters.searchType === 'cpf') {
           const cleanCpf = filters.searchName.replace(/\D/g, '');
           extraWhere += ` AND c.nu_cpf LIKE $${params.length + 1}`;
@@ -1652,8 +1667,8 @@ list = list.filter(p => p.fumante === filters.smoking);
           extraWhere += ` AND c.nu_cns LIKE $${params.length + 1}`;
           params.push(`${cleanCns}%`);
         } else {
-          extraWhere += ` AND c.no_cidadao_filtro ILIKE $${params.length + 1}`;
-          params.push(`%${filters.searchName}%`);
+          extraWhere += ` AND translate(lower(c.no_cidadao_filtro), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') ILIKE $${params.length + 1}`;
+          params.push(`%${normalizedSearch}%`);
         }
       }
 
@@ -1679,8 +1694,8 @@ list = list.filter(p => p.fumante === filters.smoking);
         const maPh = mas.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
         extraWhere += ` AND c.nu_micro_area IN (${maPh})`;
         params.push(...mas);
-      } else if (!filters.ine || filters.ine === 'all') {
-        // Default to microarea 01 only when no INE filter is set either
+      } else if ((!filters.ine || filters.ine === 'all') && !filters.searchName) {
+        // Default to microarea 01 only when no INE filter and no search term is set
         extraWhere += ` AND c.nu_micro_area IN ('01', '1', '001')`;
       }
 
@@ -1960,7 +1975,7 @@ list = list.filter(p => p.fumante === filters.smoking);
         query = `
           WITH TargetCidadaosAll AS (
             SELECT DISTINCT ON (COALESCE(c.nu_cpf, c.co_seq_cidadao::text))
-                   c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine, c.nu_cpf, c.dt_atualizado
+                   c.co_seq_cidadao, c.dt_nascimento, c.nu_micro_area, c.no_bairro, ve.nu_ine, c.nu_cpf, c.dt_atualizado
             FROM tb_cidadao c
             ${veJoin}
             WHERE c.dt_obito IS NULL 
@@ -1973,6 +1988,7 @@ list = list.filter(p => p.fumante === filters.smoking);
           TargetCidadaos AS (
             SELECT 
               tca.co_seq_cidadao,
+              tca.dt_nascimento,
               tca.nu_micro_area,
               tca.no_bairro,
               tca.nu_ine,
@@ -2035,6 +2051,7 @@ list = list.filter(p => p.fumante === filters.smoking);
               CASE 
                 WHEN is_dcv THEN 'VERY_HIGH'
                 WHEN is_high_risk_base THEN 'HIGH' 
+                WHEN is_dm = 1 AND EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento)) >= 40 THEN 'HIGH'
                 WHEN EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento)) < 40 THEN 'INDIVIDUALIZED_YOUNG'
                 WHEN EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento)) >= 75 THEN 'INDIVIDUALIZED_ELDERLY'
                 WHEN is_hyp = 1 OR is_dm = 1 THEN 'MEDIUM' 
@@ -2074,7 +2091,7 @@ list = list.filter(p => p.fumante === filters.smoking);
         query = `
           WITH TargetCidadaosAll AS (
             SELECT DISTINCT ON (COALESCE(c.nu_cpf, c.co_seq_cidadao::text))
-                   c.co_seq_cidadao, c.nu_micro_area, c.no_bairro, ve.nu_ine, c.nu_cpf, c.dt_atualizado
+                   c.co_seq_cidadao, c.dt_nascimento, c.nu_micro_area, c.no_bairro, ve.nu_ine, c.nu_cpf, c.dt_atualizado
             FROM tb_cidadao c
             ${veJoin}
             WHERE c.dt_obito IS NULL 
@@ -2087,6 +2104,7 @@ list = list.filter(p => p.fumante === filters.smoking);
           TargetCidadaos AS (
             SELECT 
               tca.co_seq_cidadao,
+              tca.dt_nascimento,
               tca.nu_micro_area,
               tca.no_bairro,
               tca.nu_ine,
@@ -2122,6 +2140,7 @@ list = list.filter(p => p.fumante === filters.smoking);
               CASE 
                 WHEN is_dcv THEN 'VERY_HIGH'
                 WHEN is_high_risk_base THEN 'HIGH' 
+                WHEN is_dm = 1 AND EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento)) >= 40 THEN 'HIGH'
                 WHEN EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento)) < 40 THEN 'INDIVIDUALIZED_YOUNG'
                 WHEN EXTRACT(YEAR FROM AGE(NOW(), dt_nascimento)) >= 75 THEN 'INDIVIDUALIZED_ELDERLY'
                 WHEN is_hyp = 1 OR is_dm = 1 THEN 'MEDIUM' 
