@@ -80,6 +80,7 @@ class RiskStratificationController {
       const searchType = req.query.searchType as string | undefined;
       const quarter = req.query.quarter as string | undefined;
       const cutoffDate = req.query.cutoffDate as string | undefined;
+      const alertFilter = req.query.alertFilter as string | undefined;
 
       const filters: any = {
         microarea,
@@ -96,6 +97,7 @@ class RiskStratificationController {
         smoking,
         quarter,
         cutoffDate,
+        alertFilter,
       };
 
       const result = await riskStratificationService.getStratifiedPaginated(page, pageSize, filters);
@@ -166,7 +168,12 @@ class RiskStratificationController {
 
   public async getMicroareas(req: Request, res: Response): Promise<void> {
     try {
-      const data = await riskStratificationService.getMicroareas();
+      let ine = req.query.ine as string | undefined;
+      const user = (req as any).user;
+      if (user && user.ine && (!ine || ine === 'all')) {
+        ine = user.ine;
+      }
+      const data = await riskStratificationService.getMicroareas(ine);
       res.json(data);
     } catch (e) {
       res.status(500).json([]);
@@ -233,6 +240,39 @@ class RiskStratificationController {
     }
   }
 
+  public async getAlertCounts(req: Request, res: Response): Promise<void> {
+    try {
+      let microarea = req.query.microarea as string | undefined;
+      let unidade = req.query.unidade as string | undefined;
+      let ine = req.query.ine as string | undefined;
+      const riskLevel = req.query.riskLevel as string | undefined;
+
+      const user = (req as any).user;
+
+      if (user && user.unidades_saude && user.unidades_saude.length > 0) {
+        if (!unidade || unidade === 'all') {
+          unidade = user.unidades_saude.join(',');
+        }
+      }
+      if (user && user.ine) {
+        if (!ine || ine === 'all') {
+          ine = user.ine;
+        }
+      }
+      if (user && user.microareas && user.microareas.length > 0) {
+        if (!microarea || microarea === 'all') {
+          microarea = user.microareas.join(',');
+        }
+      }
+
+      const filters = { ine, unidade, microarea, riskLevel };
+      const counts = await riskStratificationService.getAlertCounts(filters);
+      res.json(counts);
+    } catch (error) {
+      console.error('Error fetching alert counts:', error);
+      res.json({ hipertensosSemPA: 0, diabeticosSemHbA1c: 0, riscoElevadoVencido: 0, cardiovascularGraves: 0, diabeticosSemExamePe: 0 });
+    }
+  }
 
   public async getMapPatients(req: Request, res: Response): Promise<void> {
     try {

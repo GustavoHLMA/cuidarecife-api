@@ -475,25 +475,45 @@ export class RiskStratificationService {
     };
   }
 
+  /** Returns the current month as 'YYYY-MM' string */
+  private getCurrentMonthPeriod(): string {
+    const now = new Date();
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  }
 
-  public async getMicroareas(): Promise<string[]> {
-    if (!isPecConfigured) return ['01', '02', '03', '04', '05', '06'];
+  public async getMicroareas(ine?: string): Promise<string[]> {
+    if (!isPecConfigured) {
+      if (ine) return ['01', '02', '03'];
+      return ['01', '02', '03', '04', '05', '06'];
+    }
     try {
+      const params: any[] = [];
+      let whereClause = "WHERE c.nu_micro_area IS NOT NULL AND TRIM(c.nu_micro_area) != '' AND c.dt_obito IS NULL AND c.st_ativo = 1";
+      let joinClause = "";
+
+      if (ine && ine !== 'all') {
+        const ines = ine.split(',');
+        const placeholders = ines.map((_, i) => `$${i + 1}`).join(',');
+        joinClause = "JOIN tb_cidadao_vinculacao_equipe ve ON c.co_seq_cidadao = ve.co_cidadao";
+        whereClause += ` AND ve.nu_ine IN (${placeholders}) AND ve.st_saida_cadastro_territorio = 0 AND ve.st_saida_cadastro_obito = 0`;
+        params.push(...ines);
+      }
+
       // Normaliza microáreas: 0, 00, 001, 01, 1 → tudo vira '01'
       const sql = `
         SELECT DISTINCT 
           CASE 
-            WHEN nu_micro_area ~ '^[0-9]+$' THEN LPAD(LTRIM(nu_micro_area, '0'), 2, '0')
-            ELSE nu_micro_area
+            WHEN TRIM(c.nu_micro_area) ~ '^[0-9]+$' THEN LPAD(LTRIM(TRIM(c.nu_micro_area), '0'), 2, '0')
+            ELSE TRIM(c.nu_micro_area)
           END AS nu_micro_area_norm
-        FROM tb_cidadao
-        WHERE nu_micro_area IS NOT NULL 
-          AND nu_micro_area != '' 
+        FROM tb_cidadao c
+        ${joinClause}
+        ${whereClause}
         ORDER BY nu_micro_area_norm ASC
         LIMIT 500
       `;
-      const rows = await pecQuery(sql, []);
-      return (rows as any[]).map(r => r.nu_micro_area_norm).filter((v: string) => v !== '00');
+      const rows = await pecQuery(sql, params);
+      return (rows as any[]).map(r => r.nu_micro_area_norm).filter((v: string) => v !== '00' && v !== '');
     } catch (e) {
       console.error('[getMicroareas] Fallback to mock due to error:', e);
       return ['01', '02', '03', '04', '05', '06'];
@@ -612,7 +632,8 @@ export class RiskStratificationService {
         || (filters.cids && filters.cids.length > 0)
         || (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths))
         || filters.footExam
-        || filters.smoking;
+        || filters.smoking
+        || filters.alertFilter;
 
       if (hasDynamicFilters) {
         // Full-precision count: uses UNION ALL scalar lookups in LATERAL JOINs
@@ -655,6 +676,7 @@ export class RiskStratificationService {
                   uc.data_ultima_consulta,
                   uv.data_ultima_visita,
                   uep.data_ultimo_exame_pe,
+                  up.data_afericao,
                   uc.ds_filtro_cids,
                   CASE 
                       WHEN cr.st_fumante = 1 THEN 'Sim'
@@ -731,7 +753,8 @@ export class RiskStratificationService {
 
               -- Última Pressão (UNION ALL)
               LEFT JOIN LATERAL (
-                  SELECT fat.nu_pressao_sistolica AS pressao_s, fat.nu_pressao_diastolica AS pressao_d
+                  SELECT fat.nu_pressao_sistolica AS pressao_s, fat.nu_pressao_diastolica AS pressao_d,
+                         TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_afericao
                   FROM (
                       SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
                       JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
@@ -868,6 +891,18 @@ export class RiskStratificationService {
           countParams.push(filters.smoking);
         }
 
+        if (filters.alertFilter === 'pa') {
+          dynamicCountQuery += ` AND flag_has_c = 1 AND (data_afericao IS NULL OR data_afericao < NOW() - INTERVAL '6 months')`;
+        } else if (filters.alertFilter === 'hba1c') {
+          dynamicCountQuery += ` AND flag_dm_c = 1 AND (data_ultima_consulta IS NULL OR data_ultima_consulta < NOW() - INTERVAL '6 months')`;
+        } else if (filters.alertFilter === 'vencido') {
+          dynamicCountQuery += ` AND computed_risk IN ('VERY_HIGH', 'HIGH', 'MEDIUM') AND (data_ultima_consulta IS NULL OR data_ultima_consulta < NOW() - INTERVAL '6 months')`;
+        } else if (filters.alertFilter === 'cardio') {
+          dynamicCountQuery += ` AND (flag_cardiaca_c = 1 OR flag_infarto_c = 1 OR flag_derrame_c = 1)`;
+        } else if (filters.alertFilter === 'pe') {
+          dynamicCountQuery += ` AND flag_dm_c = 1 AND (data_ultimo_exame_pe IS NULL OR data_ultimo_exame_pe < NOW() - INTERVAL '12 months')`;
+        }
+
         try {
           const countRes = await pecQuery(dynamicCountQuery, countParams);
           total = parseInt((countRes as any)?.[0]?.total || '0', 10);
@@ -921,7 +956,8 @@ export class RiskStratificationService {
         && (!filters.cids || filters.cids.length === 0)
         && filters.consultMonths === undefined
         && !filters.footExam
-        && !filters.smoking;
+        && !filters.smoking
+        && !filters.alertFilter;
 
       let fullQuery = `
         WITH CidadaosFiltradosAll AS (
@@ -998,7 +1034,7 @@ export class RiskStratificationService {
                 COALESCE(uw.peso, cr.peso_autorreferido) AS "Peso",
                 ua.altura AS "Altura",
                 ug.glicemia AS "Glicemia Capilar",
-                uc.data_ultima_consulta AS "Data Aferição",
+                up.data_afericao AS "Data Aferição",
                 uh.vl_hemoglobina_glicada AS "HbA1c",
                 uct.vl_colesterol_total AS "ultimo_colesterol_total",
                 uldl.vl_colesterol_ldl AS "ultimo_colesterol_ldl",
@@ -1085,7 +1121,8 @@ export class RiskStratificationService {
             
             -- Última Pressão (UNION ALL)
             LEFT JOIN LATERAL (
-                SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao
+                SELECT CONCAT(fat.nu_pressao_sistolica, '/', fat.nu_pressao_diastolica) AS pressao,
+                       TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_afericao
                 FROM (
                     SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
                     JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
@@ -1340,6 +1377,18 @@ export class RiskStratificationService {
         dataParams.push(filters.smoking);
       }
 
+      if (filters.alertFilter === 'pa') {
+        finalWhere += ` AND "flag_has" = 1 AND ("Data Aferição" IS NULL OR "Data Aferição" < NOW() - INTERVAL '6 months')`;
+      } else if (filters.alertFilter === 'hba1c') {
+        finalWhere += ` AND "flag_dm" = 1 AND ("Última Consulta" IS NULL OR "Última Consulta" < NOW() - INTERVAL '6 months')`;
+      } else if (filters.alertFilter === 'vencido') {
+        finalWhere += ` AND computed_risk IN ('VERY_HIGH', 'HIGH', 'MEDIUM') AND ("Última Consulta" IS NULL OR "Última Consulta" < NOW() - INTERVAL '6 months')`;
+      } else if (filters.alertFilter === 'cardio') {
+        finalWhere += ` AND ("flag_cardiaca" = 1 OR "flag_infarto" = 1 OR "flag_derrame" = 1)`;
+      } else if (filters.alertFilter === 'pe') {
+        finalWhere += ` AND "flag_dm" = 1 AND ("Último Exame Pé" IS NULL OR "Último Exame Pé" < NOW() - INTERVAL '12 months')`;
+      }
+
       fullQuery += finalWhere;
 
       if (!cteAlreadyPaginated) {
@@ -1452,6 +1501,347 @@ export class RiskStratificationService {
     }
   }
 
+  /**
+   * Retorna contagens de alertas inteligentes para TODOS os pacientes que atendem aos filtros,
+   * sem limitação de paginação.
+   */
+  public async getAlertCounts(filters: any): Promise<{
+    hipertensosSemPA: number;
+    diabeticosSemHbA1c: number;
+    riscoElevadoVencido: number;
+    cardiovascularGraves: number;
+    diabeticosSemExamePe: number;
+  }> {
+    if (!isPecConfigured) {
+      return { hipertensosSemPA: 0, diabeticosSemHbA1c: 0, riscoElevadoVencido: 0, cardiovascularGraves: 0, diabeticosSemExamePe: 0 };
+    }
+
+    try {
+      const params: any[] = [];
+      let extraWhere = "";
+      let veJoin = "JOIN tb_cidadao_vinculacao_equipe ve ON c.co_seq_cidadao = ve.co_cidadao";
+      const requiresVeJoin = (filters.ine && filters.ine !== 'all') || (filters.unidade && filters.unidade !== 'all');
+
+      if (filters.ine && filters.ine !== 'all') {
+        const ines = filters.ine.split(',');
+        const ph = ines.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND ve.nu_ine IN (${ph})`;
+        params.push(...ines);
+      }
+      if (filters.unidade && filters.unidade !== 'all') {
+        const uds = filters.unidade.split(',');
+        const ph = uds.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND ve.nu_cnes IN (${ph})`;
+        params.push(...uds);
+      }
+      if (filters.microarea && filters.microarea !== 'all') {
+        const mas = filters.microarea.split(',');
+        const ph = mas.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        extraWhere += ` AND c.nu_micro_area IN (${ph})`;
+        params.push(...mas);
+      }
+
+      if (filters.search) {
+        const normalizedSearch = filters.search.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const cleanCpf = filters.search.replace(/\D/g, '');
+        const cleanCns = filters.search.replace(/\D/g, '');
+
+        if (cleanCpf.length === 11) {
+          extraWhere += ` AND c.nu_cpf = $${params.length + 1}`;
+          params.push(cleanCpf);
+        } else if (cleanCns.length === 15) {
+          extraWhere += ` AND c.nu_cns LIKE $${params.length + 1}`;
+          params.push(`${cleanCns}%`);
+        } else {
+          extraWhere += ` AND translate(lower(c.no_cidadao_filtro), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc') ILIKE $${params.length + 1}`;
+          params.push(`%${normalizedSearch}%`);
+        }
+      }
+
+      if (filters.sex) {
+        extraWhere += ` AND c.no_sexo = $${params.length + 1}`;
+        params.push(filters.sex);
+      }
+
+      if (filters.ageRange) {
+        const [minAge, maxAge] = filters.ageRange;
+        extraWhere += ` AND EXTRACT(YEAR FROM AGE(c.dt_nascimento)) BETWEEN $${params.length + 1} AND $${params.length + 2}`;
+        params.push(minAge, maxAge);
+      }
+
+      let dynamicWhere = '';
+
+      // Risk level filter
+      if (filters.riskLevel && filters.riskLevel !== 'ALL' && filters.riskLevel !== 'all') {
+        const levels = filters.riskLevel.split(',');
+        if (levels.includes('LOW')) levels.push('VERY_LOW');
+        const ph = levels.map((_: any, i: number) => `$${params.length + i + 1}`).join(',');
+        dynamicWhere += ` AND computed_risk IN (${ph})`;
+        params.push(...levels);
+      }
+
+      if (filters.consultMonths !== undefined && filters.consultMonths !== null && !isNaN(filters.consultMonths)) {
+        dynamicWhere += ` AND ((data_ultima_consulta IS NULL OR data_ultima_consulta < NOW() - ($${params.length + 1} || ' months')::interval) AND (data_ultima_visita IS NULL OR data_ultima_visita < NOW() - ($${params.length + 1} || ' months')::interval))`;
+        params.push(filters.consultMonths);
+      }
+
+      if (filters.footExam === 'with') {
+        dynamicWhere += ` AND data_ultimo_exame_pe IS NOT NULL`;
+      } else if (filters.footExam === 'without') {
+        dynamicWhere += ` AND data_ultimo_exame_pe IS NULL`;
+      }
+
+      if (filters.cids && filters.cids.length > 0) {
+        const hasPfx = ['I10', 'I11', 'I12', 'I13', 'I15'];
+        const dmPfx = ['E10', 'E11', 'E12', 'E13', 'E14'];
+        const cardioPfx = ['I21', 'I22', 'I50', 'I60', 'I61', 'I62', 'I63', 'I64'];
+        const renalPfx = ['N18', 'N19'];
+        const allFlagPfx = [...hasPfx, ...dmPfx, ...cardioPfx, ...renalPfx];
+
+        const conditions: string[] = [];
+        if (filters.cids.some((c: string) => hasPfx.some(p => c.startsWith(p)))) conditions.push('flag_has_c = 1');
+        if (filters.cids.some((c: string) => dmPfx.some(p => c.startsWith(p)))) conditions.push('flag_dm_c = 1');
+        if (filters.cids.some((c: string) => cardioPfx.some(p => c.startsWith(p)))) conditions.push('(flag_cardiaca_c = 1 OR flag_infarto_c = 1 OR flag_derrame_c = 1)');
+        if (filters.cids.some((c: string) => renalPfx.some(p => c.startsWith(p)))) conditions.push('flag_renal_c = 1');
+
+        const unmappedCids = filters.cids.filter((c: string) => !allFlagPfx.some(p => c.startsWith(p)));
+        for (const cid of unmappedCids) {
+          conditions.push(`ds_filtro_cids LIKE $${params.length + 1}`);
+          params.push(`%${cid}%`);
+        }
+
+        if (conditions.length > 0) {
+          dynamicWhere += ` AND (${conditions.join(' OR ')})`;
+        }
+      }
+
+      if (filters.smoking) {
+        dynamicWhere += ` AND "Fumante" = $${params.length + 1}`;
+        params.push(filters.smoking);
+      }
+
+      const query = `
+        WITH CidadaosFiltradosAll AS (
+            SELECT DISTINCT ON (COALESCE(c.nu_cpf, c.co_seq_cidadao::text))
+                c.co_seq_cidadao, c.no_sexo, c.dt_nascimento, c.nu_cpf, c.dt_atualizado
+            FROM tb_cidadao c
+            ${requiresVeJoin ? veJoin : ''}
+            WHERE c.dt_obito IS NULL 
+              AND c.st_ativo = 1
+              ${requiresVeJoin ? 'AND ve.st_saida_cadastro_territorio = 0 AND ve.st_saida_cadastro_obito = 0' : ''}
+              ${extraWhere}
+            ORDER BY COALESCE(c.nu_cpf, c.co_seq_cidadao::text), c.dt_atualizado DESC, c.co_seq_cidadao DESC
+        ),
+        ComputedPatients AS (
+            SELECT 
+                cfa.dt_nascimento AS dt_nascimento_raw,
+                CASE 
+                    WHEN cr.st_infarto = 1 OR cr.st_derrame = 1 OR cr.st_doenca_cardiaca = 1 THEN 'VERY_HIGH'
+                    WHEN (up.pressao_s IS NOT NULL AND up.pressao_s >= 180) OR (up.pressao_d IS NOT NULL AND up.pressao_d >= 110) THEN 'VERY_HIGH'
+                    WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 9 THEN 'VERY_HIGH'
+                    WHEN cr.st_problema_rins = 1 THEN 'HIGH'
+                    WHEN cr.st_diabetes = 1 AND EXTRACT(YEAR FROM AGE(cfa.dt_nascimento)) >= 40 THEN 'HIGH'
+                    WHEN COALESCE(uh.vl_hemoglobina_glicada, 0) > 7 THEN 'HIGH'
+                    WHEN ug.glicemia IS NOT NULL AND ug.glicemia > 250 THEN 'HIGH'
+                    WHEN (up.pressao_s IS NOT NULL AND up.pressao_s >= 160) OR (up.pressao_d IS NOT NULL AND up.pressao_d >= 100) THEN 'MEDIUM'
+                    WHEN ug.glicemia IS NOT NULL AND ug.glicemia >= 126 THEN 'MEDIUM'
+                    WHEN cr.st_hipertensao_arterial = 1 AND cr.st_diabetes = 1 THEN 'MEDIUM'
+                    WHEN (COALESCE(uw.peso, cr.peso_autorreferido) IS NOT NULL AND ua.altura IS NOT NULL AND ua.altura > 0 AND (COALESCE(uw.peso, cr.peso_autorreferido)::numeric / POWER(ua.altura::numeric / 100, 2)) >= 30) THEN 'MEDIUM'
+                    WHEN cr.st_hipertensao_arterial = 1 AND cr.st_fumante = 1 THEN 'MEDIUM'
+                    WHEN EXTRACT(YEAR FROM AGE(cfa.dt_nascimento)) < 40 THEN 'INDIVIDUALIZED_YOUNG'
+                    WHEN EXTRACT(YEAR FROM AGE(cfa.dt_nascimento)) >= 75 THEN 'INDIVIDUALIZED_ELDERLY'
+                    WHEN cr.st_diabetes = 1 THEN 'LOW'
+                    ELSE 'LOW'
+                END AS computed_risk,
+                uc.data_ultima_consulta,
+                uv.data_ultima_visita,
+                uep.data_ultimo_exame_pe,
+                up.data_afericao,
+                uc.ds_filtro_cids,
+                CASE 
+                    WHEN cr.st_fumante = 1 THEN 'Sim'
+                    WHEN cr.st_fumante = 0 THEN 'Não'
+                    ELSE 'Sem Registro'
+                END AS "Fumante",
+                cr.st_hipertensao_arterial AS flag_has_c,
+                cr.st_diabetes AS flag_dm_c,
+                cr.st_doenca_cardiaca AS flag_cardiaca_c,
+                cr.st_problema_rins AS flag_renal_c,
+                cr.st_infarto AS flag_infarto_c,
+                cr.st_derrame AS flag_derrame_c
+            FROM CidadaosFiltradosAll cfa
+
+            -- Condições de Saúde (UNION ALL para buscar irmãos por CPF via índice)
+            LEFT JOIN LATERAL (
+                SELECT st_fumante, st_hipertensao_arterial, st_diabetes, st_doenca_cardiaca,
+                       st_infarto, st_derrame, st_problema_rins, peso_autorreferido
+                FROM tb_condicoes_saude_auto
+                WHERE co_cidadao IN (
+                    SELECT sibling.co_seq_cidadao FROM tb_cidadao sibling
+                    WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT cfa.co_seq_cidadao WHERE cfa.nu_cpf IS NULL
+                )
+                ORDER BY co_seq_condicoes_saude_auto DESC LIMIT 1
+            ) cr ON true
+
+            -- Última consulta (UNION ALL via fat_cidadao_pec)
+            LEFT JOIN LATERAL (
+                SELECT TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_consulta, fat.ds_filtro_cids
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                ORDER BY fat.co_dim_tempo DESC LIMIT 1
+            ) uc ON true
+
+            -- Última Visita Domiciliar (UNION ALL)
+            LEFT JOIN LATERAL (
+                SELECT TO_DATE(fvd.co_dim_tempo::text, 'YYYYMMDD') AS data_ultima_visita
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_visita_domiciliar fvd ON fvd.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                ORDER BY fvd.co_dim_tempo DESC LIMIT 1
+            ) uv ON true
+
+            -- Último Exame do Pé
+            LEFT JOIN LATERAL (
+                SELECT TO_DATE(fpa.co_dim_tempo::text, 'YYYYMMDD') AS data_ultimo_exame_pe
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_proced_atend_proced fpa ON fpa.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fpa.co_dim_procedimento = 7478
+                ORDER BY fpa.co_dim_tempo DESC LIMIT 1
+            ) uep ON true
+
+            -- Última Pressão (UNION ALL)
+            LEFT JOIN LATERAL (
+                SELECT fat.nu_pressao_sistolica AS pressao_s, fat.nu_pressao_diastolica AS pressao_d,
+                       TO_DATE(fat.co_dim_tempo::text, 'YYYYMMDD') AS data_afericao
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fat.nu_pressao_sistolica IS NOT NULL
+                ORDER BY fat.co_dim_tempo DESC LIMIT 1
+            ) up ON true
+
+            -- Última Glicemia (UNION ALL)
+            LEFT JOIN LATERAL (
+                SELECT fat.nu_glicemia AS glicemia
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fat.nu_glicemia IS NOT NULL
+                ORDER BY fat.co_dim_tempo DESC LIMIT 1
+            ) ug ON true
+
+            -- Último Peso (UNION ALL)
+            LEFT JOIN LATERAL (
+                SELECT fat.nu_peso AS peso
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fat.nu_peso IS NOT NULL
+                ORDER BY fat.co_dim_tempo DESC LIMIT 1
+            ) uw ON true
+
+            -- Última Altura (UNION ALL)
+            LEFT JOIN LATERAL (
+                SELECT fat.nu_altura AS altura
+                FROM (
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_cidadao sibling
+                    JOIN tb_fat_cidadao_pec fcp ON fcp.co_cidadao = sibling.co_seq_cidadao
+                    WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                    UNION ALL
+                    SELECT fcp.co_seq_fat_cidadao_pec FROM tb_fat_cidadao_pec fcp
+                    WHERE fcp.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                ) ids
+                JOIN tb_fat_atendimento_individual fat ON fat.co_fat_cidadao_pec = ids.co_seq_fat_cidadao_pec
+                WHERE fat.nu_altura IS NOT NULL
+                ORDER BY fat.co_dim_tempo DESC LIMIT 1
+            ) ua ON true
+
+            -- HbA1c (UNION ALL via prontuário)
+            LEFT JOIN LATERAL (
+                SELECT hem.vl_hemoglobina_glicada 
+                FROM (
+                    SELECT req.co_seq_exame_requisitado
+                    FROM (
+                        SELECT p.co_seq_prontuario FROM tb_cidadao sibling
+                        JOIN tb_prontuario p ON p.co_cidadao = sibling.co_seq_cidadao
+                        WHERE sibling.nu_cpf = cfa.nu_cpf AND cfa.nu_cpf IS NOT NULL AND sibling.dt_obito IS NULL AND sibling.st_ativo = 1
+                        UNION ALL
+                        SELECT p.co_seq_prontuario FROM tb_prontuario p
+                        WHERE p.co_cidadao = cfa.co_seq_cidadao AND cfa.nu_cpf IS NULL
+                    ) prons
+                    JOIN tb_exame_requisitado req ON req.co_prontuario = prons.co_seq_prontuario
+                    ORDER BY req.co_seq_exame_requisitado DESC
+                    OFFSET 0
+                ) safe_req
+                JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = safe_req.co_seq_exame_requisitado
+                LIMIT 1
+            ) uh ON true
+        )
+        SELECT
+          COUNT(*) FILTER (WHERE flag_has_c = 1 AND (data_afericao IS NULL OR data_afericao < NOW() - INTERVAL '6 months')) AS hipertensos_sem_pa,
+          COUNT(*) FILTER (WHERE flag_dm_c = 1 AND (data_ultima_consulta IS NULL OR data_ultima_consulta < NOW() - INTERVAL '6 months')) AS diabeticos_sem_hba1c,
+          COUNT(*) FILTER (WHERE computed_risk IN ('VERY_HIGH','HIGH','MEDIUM') AND (data_ultima_consulta IS NULL OR data_ultima_consulta < NOW() - INTERVAL '6 months')) AS risco_elevado_vencido,
+          COUNT(*) FILTER (WHERE (flag_cardiaca_c = 1 OR flag_infarto_c = 1 OR flag_derrame_c = 1)) AS cardiovascular_graves,
+          COUNT(*) FILTER (WHERE flag_dm_c = 1 AND (data_ultimo_exame_pe IS NULL OR data_ultimo_exame_pe < NOW() - INTERVAL '12 months')) AS diabeticos_sem_exame_pe
+        FROM ComputedPatients
+        WHERE 1=1 ${dynamicWhere}
+      `;
+
+      const rows = await pecQuery(query, params);
+      const r = (rows as any[])[0] || {};
+      return {
+        hipertensosSemPA: parseInt(r.hipertensos_sem_pa || '0', 10),
+        diabeticosSemHbA1c: parseInt(r.diabeticos_sem_hba1c || '0', 10),
+        riscoElevadoVencido: parseInt(r.risco_elevado_vencido || '0', 10),
+        cardiovascularGraves: parseInt(r.cardiovascular_graves || '0', 10),
+        diabeticosSemExamePe: parseInt(r.diabeticos_sem_exame_pe || '0', 10),
+      };
+    } catch (error: any) {
+      console.error('[AlertCounts] Error:', error.message);
+      return { hipertensosSemPA: 0, diabeticosSemHbA1c: 0, riscoElevadoVencido: 0, cardiovascularGraves: 0, diabeticosSemExamePe: 0 };
+    }
+  }
+
   private getStratifiedPaginatedMock(page: number, pageSize: number, filters: any) {
     let list = this.stratifyPatients(filters.microarea);
 
@@ -1479,7 +1869,24 @@ export class RiskStratificationService {
     }
 
     if (filters.smoking) {
-list = list.filter(p => p.fumante === filters.smoking);
+      list = list.filter(p => p.fumante === filters.smoking);
+    }
+
+    if (filters.alertFilter === 'pa') {
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 6);
+      list = list.filter(p => ((p as any).flag_has === 1 || p.cids?.some(c => c.startsWith('I1'))) && (!(p as any).data_afericao || new Date((p as any).data_afericao) < cutoff));
+    } else if (filters.alertFilter === 'hba1c') {
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 6);
+      list = list.filter(p => ((p as any).flag_dm === 1 || p.cids?.some(c => c.startsWith('E1'))) && (p.ultimo_hba1c == null || !p.data_ultima_consulta || new Date(p.data_ultima_consulta) < cutoff));
+    } else if (filters.alertFilter === 'vencido') {
+      const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 6);
+      list = list.filter(p => (p.risk_level === 'VERY_HIGH' || p.risk_level === 'HIGH' || p.risk_level === 'MEDIUM') && (!p.data_ultima_consulta || new Date(p.data_ultima_consulta) < cutoff));
+    } else if (filters.alertFilter === 'cardio') {
+      const cvs = ["I21", "I22", "I50", "I63", "I64"];
+      list = list.filter(p => (p as any).flag_cardiaca === 1 || (p as any).flag_infarto === 1 || (p as any).flag_derrame === 1 || p.cids?.some(c => cvs.some(v => c.startsWith(v))));
+    } else if (filters.alertFilter === 'pe') {
+      const cutoff = new Date(); cutoff.setFullYear(cutoff.getFullYear() - 1);
+      list = list.filter(p => ((p as any).flag_dm === 1 || p.cids?.some(c => c.startsWith('E1'))) && (!(p as any).data_ultimo_exame_pe || new Date((p as any).data_ultimo_exame_pe) < cutoff));
     }
 
     const start = (page - 1) * pageSize;
@@ -1939,10 +2346,26 @@ list = list.filter(p => p.fumante === filters.smoking);
       };
 
       let cutoffDate: string | null = null;
+      let prevCutoffDate: string | null = null;
+
       if (endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)) {
         cutoffDate = endDate;
+        if (startDate && /^\d{4}-\d{2}-\d{2}$/.test(startDate)) {
+          const curStart = new Date(startDate);
+          const prevEnd = new Date(curStart.getTime() - 24 * 60 * 60 * 1000);
+          prevCutoffDate = prevEnd.toISOString().split('T')[0];
+        } else {
+          const curEnd = new Date(endDate);
+          curEnd.setMonth(curEnd.getMonth() - 1);
+          prevCutoffDate = curEnd.toISOString().split('T')[0];
+        }
       } else if (quarter) {
         cutoffDate = getPeriodEndDate(quarter);
+        const prevQuarterStr = this.getPreviousMonthPeriod(quarter);
+        prevCutoffDate = getPeriodEndDate(prevQuarterStr);
+      } else {
+        const prevQuarterStr = this.getPreviousMonthPeriod(this.getCurrentMonthPeriod());
+        prevCutoffDate = getPeriodEndDate(prevQuarterStr);
       }
 
       const formatYYYYMMDD = (d: Date) => {
@@ -1962,6 +2385,18 @@ list = list.filter(p => p.fumante === filters.smoking);
       const start6mInt = formatYYYYMMDD(date6mAgo);
       const start12mInt = formatYYYYMMDD(date12mAgo);
       const referenceDate = `'${targetRefDate.toISOString().split('T')[0]}'::date`;
+
+      // Previous period reference dates (para cálculo real de evolução/delta)
+      const prevTargetRefDate = prevCutoffDate ? new Date(`${prevCutoffDate}T23:59:59`) : new Date(date6mAgo);
+      const prevDate6mAgo = new Date(prevTargetRefDate);
+      prevDate6mAgo.setMonth(prevDate6mAgo.getMonth() - 6);
+      const prevDate12mAgo = new Date(prevTargetRefDate);
+      prevDate12mAgo.setFullYear(prevDate12mAgo.getFullYear() - 1);
+
+      const prevCutoffInt = formatYYYYMMDD(prevTargetRefDate);
+      const prevStart6mInt = formatYYYYMMDD(prevDate6mAgo);
+      const prevStart12mInt = formatYYYYMMDD(prevDate12mAgo);
+      const prevReferenceDate = `'${prevTargetRefDate.toISOString().split('T')[0]}'::date`;
 
       const hasFilter = extraWhere.trim().length > 0;
 
@@ -2035,7 +2470,14 @@ list = list.filter(p => p.fumante === filters.smoking);
               -- HbA1c nos últimos 12 meses
               (SELECT 1 FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado WHERE req.co_prontuario = ANY(tcw.all_co_seq_prontuarios) LIMIT 1) AS has_hba1c,
               -- Exame do Pé nos últimos 12 meses (B-Tree integer index scan)
-              (SELECT 1 FROM tb_fat_proced_atend_proced fpa WHERE fpa.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fpa.co_dim_procedimento = 7478 AND fpa.co_dim_tempo BETWEEN ${start12mInt} AND ${cutoffInt} LIMIT 1) AS has_exame_pes
+              (SELECT 1 FROM tb_fat_proced_atend_proced fpa WHERE fpa.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fpa.co_dim_procedimento = 7478 AND fpa.co_dim_tempo BETWEEN ${start12mInt} AND ${cutoffInt} LIMIT 1) AS has_exame_pes,
+
+              -- Indicadores do período anterior para variação real
+              (SELECT MAX(TO_DATE(f.co_dim_tempo::text, 'YYYYMMDD')) FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.co_dim_tempo <= ${prevCutoffInt}) AS prev_dt_ultima_consulta,
+              (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.nu_pressao_sistolica IS NOT NULL AND f.co_dim_tempo BETWEEN ${prevStart6mInt} AND ${prevCutoffInt} LIMIT 1) AS prev_has_pa_6m,
+              (SELECT 1 FROM tb_fat_visita_domiciliar fvd WHERE fvd.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fvd.co_dim_tempo BETWEEN ${prevStart12mInt} AND ${prevCutoffInt} LIMIT 1) AS prev_has_visita_12m,
+              (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.nu_peso IS NOT NULL AND f.nu_altura IS NOT NULL AND f.co_dim_tempo BETWEEN ${prevStart12mInt} AND ${prevCutoffInt} LIMIT 1) AS prev_has_peso_altura,
+              (SELECT 1 FROM tb_fat_proced_atend_proced fpa WHERE fpa.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fpa.co_dim_procedimento = 7478 AND fpa.co_dim_tempo BETWEEN ${prevStart12mInt} AND ${prevCutoffInt} LIMIT 1) AS prev_has_exame_pes
             FROM TargetCidadaosWithPECs tcw
             LEFT JOIN LATERAL (
               SELECT st_hipertensao_arterial, st_diabetes, st_infarto, st_derrame, st_doenca_cardiaca, st_problema_rins
@@ -2071,16 +2513,26 @@ list = list.filter(p => p.fumante === filters.smoking);
             COUNT(*) FILTER (WHERE is_dm = 1) AS dm_total,
             -- HAS indicators (using referenceDate instead of NOW())
             COUNT(*) FILTER (WHERE is_hyp = 1 AND dt_ultima_consulta >= ${referenceDate} - INTERVAL '6 months') AS hyp_consulta_6m,
+            COUNT(*) FILTER (WHERE is_hyp = 1 AND prev_dt_ultima_consulta >= ${prevReferenceDate} - INTERVAL '6 months') AS prev_hyp_consulta_6m,
             COUNT(*) FILTER (WHERE is_hyp = 1 AND has_pa_6m = 1) AS hyp_pa_6m,
+            COUNT(*) FILTER (WHERE is_hyp = 1 AND prev_has_pa_6m = 1) AS prev_hyp_pa_6m,
             COUNT(*) FILTER (WHERE is_hyp = 1 AND has_visita_12m = 1) AS hyp_visita_12m,
+            COUNT(*) FILTER (WHERE is_hyp = 1 AND prev_has_visita_12m = 1) AS prev_hyp_visita_12m,
             COUNT(*) FILTER (WHERE is_hyp = 1 AND has_peso_altura = 1) AS hyp_peso_altura,
+            COUNT(*) FILTER (WHERE is_hyp = 1 AND prev_has_peso_altura = 1) AS prev_hyp_peso_altura,
             -- DM indicators
             COUNT(*) FILTER (WHERE is_dm = 1 AND dt_ultima_consulta >= ${referenceDate} - INTERVAL '6 months') AS dm_consulta_6m,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND prev_dt_ultima_consulta >= ${prevReferenceDate} - INTERVAL '6 months') AS prev_dm_consulta_6m,
             COUNT(*) FILTER (WHERE is_dm = 1 AND has_pa_6m = 1) AS dm_pa_6m,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND prev_has_pa_6m = 1) AS prev_dm_pa_6m,
             COUNT(*) FILTER (WHERE is_dm = 1 AND has_peso_altura = 1) AS dm_peso_altura,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND prev_has_peso_altura = 1) AS prev_dm_peso_altura,
             COUNT(*) FILTER (WHERE is_dm = 1 AND has_hba1c = 1) AS dm_hba1c,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND has_hba1c = 1) AS prev_dm_hba1c,
             COUNT(*) FILTER (WHERE is_dm = 1 AND has_exame_pes = 1) AS dm_exame_pes,
-            COUNT(*) FILTER (WHERE is_dm = 1 AND has_visita_12m = 1) AS dm_visita_12m
+            COUNT(*) FILTER (WHERE is_dm = 1 AND prev_has_exame_pes = 1) AS prev_dm_exame_pes,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND has_visita_12m = 1) AS dm_visita_12m,
+            COUNT(*) FILTER (WHERE is_dm = 1 AND prev_has_visita_12m = 1) AS prev_dm_visita_12m
           FROM Classified
         `;
 
@@ -2158,8 +2610,8 @@ list = list.filter(p => p.fumante === filters.smoking);
             COUNT(*) FILTER (WHERE risk_level = 'INDIVIDUALIZED_ELDERLY') AS individualized_elderly_risk,
             COUNT(*) FILTER (WHERE is_hyp = 1) AS hyp_total,
             COUNT(*) FILTER (WHERE is_dm = 1) AS dm_total,
-            0 AS hyp_consulta_6m, 0 AS hyp_pa_6m, 0 AS hyp_visita_12m, 0 AS hyp_peso_altura,
-            0 AS dm_consulta_6m, 0 AS dm_pa_6m, 0 AS dm_peso_altura, 0 AS dm_hba1c, 0 AS dm_exame_pes, 0 AS dm_visita_12m
+            0 AS hyp_consulta_6m, 0 AS prev_hyp_consulta_6m, 0 AS hyp_pa_6m, 0 AS prev_hyp_pa_6m, 0 AS hyp_visita_12m, 0 AS prev_hyp_visita_12m, 0 AS hyp_peso_altura, 0 AS prev_hyp_peso_altura,
+            0 AS dm_consulta_6m, 0 AS prev_dm_consulta_6m, 0 AS dm_pa_6m, 0 AS prev_dm_pa_6m, 0 AS dm_peso_altura, 0 AS prev_dm_peso_altura, 0 AS dm_hba1c, 0 AS prev_dm_hba1c, 0 AS dm_exame_pes, 0 AS prev_dm_exame_pes, 0 AS dm_visita_12m, 0 AS prev_dm_visita_12m
           FROM Classified
         `;
       }
@@ -2174,21 +2626,71 @@ list = list.filter(p => p.fumante === filters.smoking);
 
       const pct = (n: number, d: number) => d > 0 ? Math.round((n / d) * 100) : 0;
 
-      const c5Score = hypTotal > 0 ? Math.round((
-        pct(parseInt(r.hyp_consulta_6m, 10), hypTotal) +
-        pct(parseInt(r.hyp_pa_6m, 10), hypTotal) +
-        pct(parseInt(r.hyp_visita_12m, 10), hypTotal) +
-        pct(parseInt(r.hyp_peso_altura, 10), hypTotal)) / 4) : 0;
+      // HAS metrics
+      const hypConsulta = pct(parseInt(r.hyp_consulta_6m, 10), hypTotal);
+      const prevHypConsulta = pct(parseInt(r.prev_hyp_consulta_6m, 10), hypTotal);
+      const hypConsultaDelta = parseFloat((hypConsulta - prevHypConsulta).toFixed(1));
+
+      const hypPa = pct(parseInt(r.hyp_pa_6m, 10), hypTotal);
+      const prevHypPa = pct(parseInt(r.prev_hyp_pa_6m, 10), hypTotal);
+      const hypPaDelta = parseFloat((hypPa - prevHypPa).toFixed(1));
+
+      const hypVisita = pct(parseInt(r.hyp_visita_12m, 10), hypTotal);
+      const prevHypVisita = pct(parseInt(r.prev_hyp_visita_12m, 10), hypTotal);
+      const hypVisitaDelta = parseFloat((hypVisita - prevHypVisita).toFixed(1));
+
+      const hypPeso = pct(parseInt(r.hyp_peso_altura, 10), hypTotal);
+      const prevHypPeso = pct(parseInt(r.prev_hyp_peso_altura, 10), hypTotal);
+      const hypPesoDelta = parseFloat((hypPeso - prevHypPeso).toFixed(1));
+
+      const c5Score = hypTotal > 0 ? Math.round((hypConsulta + hypPa + hypVisita + hypPeso) / 4) : 0;
+      const prevC5Score = hypTotal > 0 ? Math.round((prevHypConsulta + prevHypPa + prevHypVisita + prevHypPeso) / 4) : 0;
+      const c5ScoreDelta = parseFloat((c5Score - prevC5Score).toFixed(1));
+
+      // DM metrics
+      const dmConsulta = pct(parseInt(r.dm_consulta_6m, 10), dmTotal);
+      const prevDmConsulta = pct(parseInt(r.prev_dm_consulta_6m, 10), dmTotal);
+      const dmConsultaDelta = parseFloat((dmConsulta - prevDmConsulta).toFixed(1));
+
+      const dmPa = pct(parseInt(r.dm_pa_6m, 10), dmTotal);
+      const prevDmPa = pct(parseInt(r.prev_dm_pa_6m, 10), dmTotal);
+      const dmPaDelta = parseFloat((dmPa - prevDmPa).toFixed(1));
+
+      const dmPeso = pct(parseInt(r.dm_peso_altura, 10), dmTotal);
+      const prevDmPeso = pct(parseInt(r.prev_dm_peso_altura, 10), dmTotal);
+      const dmPesoDelta = parseFloat((dmPeso - prevDmPeso).toFixed(1));
+
+      const dmHba1c = pct(parseInt(r.dm_hba1c, 10), dmTotal);
+      const prevDmHba1c = pct(parseInt(r.prev_dm_hba1c, 10), dmTotal);
+      const dmHba1cDelta = parseFloat((dmHba1c - prevDmHba1c).toFixed(1));
+
+      const dmExamePes = pct(parseInt(r.dm_exame_pes, 10), dmTotal);
+      const prevDmExamePes = pct(parseInt(r.prev_dm_exame_pes, 10), dmTotal);
+      const dmExamePesDelta = parseFloat((dmExamePes - prevDmExamePes).toFixed(1));
+
+      const dmVisita = pct(parseInt(r.dm_visita_12m, 10), dmTotal);
+      const prevDmVisita = pct(parseInt(r.prev_dm_visita_12m, 10), dmTotal);
+      const dmVisitaDelta = parseFloat((dmVisita - prevDmVisita).toFixed(1));
 
       const c4Score = dmTotal > 0 ? Math.round(
-        pct(parseInt(r.dm_consulta_6m, 10), dmTotal) * 0.2 +
-        pct(parseInt(r.dm_pa_6m, 10), dmTotal) * 0.15 +
-        pct(parseInt(r.dm_peso_altura, 10), dmTotal) * 0.15 +
-        pct(parseInt(r.dm_hba1c, 10), dmTotal) * 0.15 +
-        pct(parseInt(r.dm_exame_pes, 10), dmTotal) * 0.15 +
-        pct(parseInt(r.dm_visita_12m, 10), dmTotal) * 0.2) : 0;
+        dmConsulta * 0.2 +
+        dmPa * 0.15 +
+        dmPeso * 0.15 +
+        dmHba1c * 0.15 +
+        dmExamePes * 0.15 +
+        dmVisita * 0.2
+      ) : 0;
+      const prevC4Score = dmTotal > 0 ? Math.round(
+        prevDmConsulta * 0.2 +
+        prevDmPa * 0.15 +
+        prevDmPeso * 0.15 +
+        prevDmHba1c * 0.15 +
+        prevDmExamePes * 0.15 +
+        prevDmVisita * 0.2
+      ) : 0;
+      const c4ScoreDelta = parseFloat((c4Score - prevC4Score).toFixed(1));
 
-      // Se a consulta real não tiver histórico anterior disponível, usaremos o cálculo mock de variação proporcional
+      // Fallback mock only if no data
       const prevMock = this.getTerritoryStatsMock(microarea, unidade, quarter, startDate, endDate);
 
       // Microarea counts was removed for performance optimization
@@ -2207,25 +2709,25 @@ list = list.filter(p => p.fumante === filters.smoking);
         c5: {
           total: hypTotal,
           score: hypTotal > 0 ? c5Score : prevMock.c5.score,
-          scoreDelta: prevMock.c5.scoreDelta,
+          scoreDelta: hypTotal > 0 ? c5ScoreDelta : prevMock.c5.scoreDelta,
           rows: [
-            { label: "Consulta médica/enfermagem (6 meses)", actual: hypTotal > 0 ? pct(parseInt(r.hyp_consulta_6m, 10), hypTotal) : prevMock.c5.rows[0].actual, target: 75, delta: prevMock.c5.rows[0].delta },
-            { label: "Aferição de PA (6 meses)", actual: hypTotal > 0 ? pct(parseInt(r.hyp_pa_6m, 10), hypTotal) : prevMock.c5.rows[1].actual, target: 75, delta: prevMock.c5.rows[1].delta },
-            { label: "Visita domiciliar ACS (2/ano)", actual: hypTotal > 0 ? pct(parseInt(r.hyp_visita_12m, 10), hypTotal) : prevMock.c5.rows[2].actual, target: 75, delta: prevMock.c5.rows[2].delta },
-            { label: "Peso/altura (1/ano)", actual: hypTotal > 0 ? pct(parseInt(r.hyp_peso_altura, 10), hypTotal) : prevMock.c5.rows[3].actual, target: 75, delta: prevMock.c5.rows[3].delta },
+            { label: "Consulta médica/enfermagem (6 meses)", actual: hypTotal > 0 ? hypConsulta : prevMock.c5.rows[0].actual, target: 75, delta: hypTotal > 0 ? hypConsultaDelta : prevMock.c5.rows[0].delta, previousActual: prevHypConsulta },
+            { label: "Aferição de PA (6 meses)", actual: hypTotal > 0 ? hypPa : prevMock.c5.rows[1].actual, target: 75, delta: hypTotal > 0 ? hypPaDelta : prevMock.c5.rows[1].delta, previousActual: prevHypPa },
+            { label: "Visita domiciliar ACS (2/ano)", actual: hypTotal > 0 ? hypVisita : prevMock.c5.rows[2].actual, target: 75, delta: hypTotal > 0 ? hypVisitaDelta : prevMock.c5.rows[2].delta, previousActual: prevHypVisita },
+            { label: "Peso/altura (1/ano)", actual: hypTotal > 0 ? hypPeso : prevMock.c5.rows[3].actual, target: 75, delta: hypTotal > 0 ? hypPesoDelta : prevMock.c5.rows[3].delta, previousActual: prevHypPeso },
           ],
         },
         c4: {
           total: dmTotal,
           score: dmTotal > 0 ? c4Score : prevMock.c4.score,
-          scoreDelta: prevMock.c4.scoreDelta,
+          scoreDelta: dmTotal > 0 ? c4ScoreDelta : prevMock.c4.scoreDelta,
           rows: [
-            { label: "Consulta médica/enfermagem (6 meses)", actual: dmTotal > 0 ? pct(parseInt(r.dm_consulta_6m, 10), dmTotal) : prevMock.c4.rows[0].actual, target: 75, delta: prevMock.c4.rows[0].delta },
-            { label: "Aferição de PA (6 meses)", actual: dmTotal > 0 ? pct(parseInt(r.dm_pa_6m, 10), dmTotal) : prevMock.c4.rows[1].actual, target: 75, delta: prevMock.c4.rows[1].delta },
-            { label: "Peso/altura (1/ano)", actual: dmTotal > 0 ? pct(parseInt(r.dm_peso_altura, 10), dmTotal) : prevMock.c4.rows[2].actual, target: 75, delta: prevMock.c4.rows[2].delta },
-            { label: "HbA1c (12 meses)", actual: dmTotal > 0 ? pct(parseInt(r.dm_hba1c, 10), dmTotal) : prevMock.c4.rows[3].actual, target: 75, delta: prevMock.c4.rows[3].delta },
-            { label: "Exame dos pés (1/ano)", actual: dmTotal > 0 ? pct(parseInt(r.dm_exame_pes, 10), dmTotal) : prevMock.c4.rows[4].actual, target: 75, delta: prevMock.c4.rows[4].delta },
-            { label: "Visita domiciliar ACS (2/ano)", actual: dmTotal > 0 ? pct(parseInt(r.dm_visita_12m, 10), dmTotal) : prevMock.c4.rows[5].actual, target: 75, delta: prevMock.c4.rows[5].delta },
+            { label: "Consulta médica/enfermagem (6 meses)", actual: dmTotal > 0 ? dmConsulta : prevMock.c4.rows[0].actual, target: 75, delta: dmTotal > 0 ? dmConsultaDelta : prevMock.c4.rows[0].delta, previousActual: prevDmConsulta },
+            { label: "Aferição de PA (6 meses)", actual: dmTotal > 0 ? dmPa : prevMock.c4.rows[1].actual, target: 75, delta: dmTotal > 0 ? dmPaDelta : prevMock.c4.rows[1].delta, previousActual: prevDmPa },
+            { label: "Peso/altura (1/ano)", actual: dmTotal > 0 ? dmPeso : prevMock.c4.rows[2].actual, target: 75, delta: dmTotal > 0 ? dmPesoDelta : prevMock.c4.rows[2].delta, previousActual: prevDmPeso },
+            { label: "HbA1c (12 meses)", actual: dmTotal > 0 ? dmHba1c : prevMock.c4.rows[3].actual, target: 75, delta: dmTotal > 0 ? dmHba1cDelta : prevMock.c4.rows[3].delta, previousActual: prevDmHba1c },
+            { label: "Exame dos pés (1/ano)", actual: dmTotal > 0 ? dmExamePes : prevMock.c4.rows[4].actual, target: 75, delta: dmTotal > 0 ? dmExamePesDelta : prevMock.c4.rows[4].delta, previousActual: prevDmExamePes },
+            { label: "Visita domiciliar ACS (2/ano)", actual: dmTotal > 0 ? dmVisita : prevMock.c4.rows[5].actual, target: 75, delta: dmTotal > 0 ? dmVisitaDelta : prevMock.c4.rows[5].delta, previousActual: prevDmVisita },
           ],
         },
         microareaCounts,
@@ -2237,24 +2739,27 @@ list = list.filter(p => p.fumante === filters.smoking);
   }
 
   private getPreviousMonthPeriod(periodStr?: string): string {
-    if (!periodStr || periodStr === 'today') {
-      return '2026-07';
-    }
-    const mMatch = periodStr.match(/^(\d{4})-(\d{2})$/);
+    const defaultPeriod = this.getCurrentMonthPeriod();
+    const target = (!periodStr || periodStr === 'today') ? defaultPeriod : periodStr;
+
+    const mMatch = target.match(/^(\d{4})-(\d{2})$/);
     if (mMatch) {
       let year = parseInt(mMatch[1], 10);
       let month = parseInt(mMatch[2], 10) - 1;
       if (month < 1) { month = 12; year -= 1; }
       return `${year}-${String(month).padStart(2, '0')}`;
     }
-    const qMatch = periodStr.match(/^(\d{4})-Q([1-4])$/);
+    const qMatch = target.match(/^(\d{4})-Q([1-4])$/);
     if (qMatch) {
       let year = parseInt(qMatch[1], 10);
       let q = parseInt(qMatch[2], 10) - 1;
       if (q < 1) { q = 4; year -= 1; }
       return `${year}-Q${q}`;
     }
-    return '2026-07';
+
+    const now = new Date();
+    now.setMonth(now.getMonth() - 1);
+    return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   }
 
   private getTerritoryStatsMock(microarea?: string, unidade?: string, quarter?: string, startDate?: string, endDate?: string) {

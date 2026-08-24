@@ -25,6 +25,7 @@ router.get('/map-patients', riskController.getMapPatients);
 router.get('/indicators/evolution', riskController.getHistoricalIndicatorsEvolution);
 router.get('/patient/:id/soap', riskController.getPatientSoapHistory);
 router.get('/global-benchmarks', riskController.getGlobalBenchmarks);
+router.get('/alert-counts', riskController.getAlertCounts);
 
 export default router;
 

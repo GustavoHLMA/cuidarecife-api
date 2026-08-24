@@ -31,15 +31,7 @@ app.use(cors({
   credentials: true,
 }));
 
-// SEGURANÇA: Rate limiting global (previne brute-force e DDoS)
-const globalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutos
-  max: 200, // máximo 200 reqs por IP por janela
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
-});
-app.use(globalLimiter);
+// Body limit: 50mb (suporta fotos de alta resolução para OCR)
 
 // Rate limiting agressivo para rotas de autenticação (anti brute-force)
 const authLimiter = rateLimit({
