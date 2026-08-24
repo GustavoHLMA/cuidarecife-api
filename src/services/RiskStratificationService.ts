@@ -86,12 +86,12 @@ export class RiskStratificationService {
   // Entradas: sexo, idade, tabagismo, diabetes, PAS, IMC, colesterolTotal (opcional)
   // Saída: porcentagem de risco estimada em 10 anos (0-100)
   private calculateHEARTS(
-    sexo: string, 
-    idade: number, 
-    fumante: boolean, 
-    diabetico: boolean, 
-    pas: number, 
-    imc: number, 
+    sexo: string,
+    idade: number,
+    fumante: boolean,
+    diabetico: boolean,
+    pas: number,
+    imc: number,
     colesterolTotal?: number | null
   ): number {
     let baseScore = 0;
@@ -129,7 +129,7 @@ export class RiskStratificationService {
       else if (colesterolTotal >= 200) baseScore += 4;
       else if (colesterolTotal >= 150) baseScore += 2;
       // < 150: +0
-    } 
+    }
     // CAMINHO 2: SEM COLESTEROL TOTAL (Usando IMC — Seção 2 do PCDT)
     else {
       if (imc >= 35) baseScore += 4;
@@ -399,8 +399,8 @@ export class RiskStratificationService {
 
       const heartsLabel = riskPct >= 20 ? 'Muito Alto (≥20%)'
         : riskPct >= 10 ? 'Alto (10-20%)'
-        : riskPct >= 5 ? 'Moderado (5-10%)'
-        : 'Baixo (<5%)';
+          : riskPct >= 5 ? 'Moderado (5-10%)'
+            : 'Baixo (<5%)';
 
       const pathText = (colesterolTotal && colesterolTotal > 0) ? "Com Colesterol" : "Sem Colesterol (IMC)";
       reason = `Calculadora HEARTS (${pathText}): Risco CV ${heartsLabel}`;
@@ -2467,8 +2467,25 @@ export class RiskStratificationService {
               (SELECT 1 FROM tb_fat_visita_domiciliar fvd WHERE fvd.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fvd.co_dim_tempo BETWEEN ${start12mInt} AND ${cutoffInt} LIMIT 1) AS has_visita_12m,
               -- Peso/Altura nos últimos 12 meses (B-Tree integer index scan)
               (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.nu_peso IS NOT NULL AND f.nu_altura IS NOT NULL AND f.co_dim_tempo BETWEEN ${start12mInt} AND ${cutoffInt} LIMIT 1) AS has_peso_altura,
-              -- HbA1c nos últimos 12 meses (período selecionado)
-              (SELECT 1 FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado WHERE req.co_prontuario = ANY(tcw.all_co_seq_prontuarios) AND COALESCE(req.dt_realizacao, req.dt_solicitacao) >= ${referenceDate} - INTERVAL '12 months' AND COALESCE(req.dt_realizacao, req.dt_solicitacao) <= ${referenceDate} + INTERVAL '1 day' LIMIT 1) AS has_hba1c,
+              -- HbA1c nos últimos 12 meses (abrangência total: SIGTAP 0202010503 + ABEX008 + Prontuário)
+              COALESCE(
+                (SELECT 1 FROM tb_fat_atendimento_individual f 
+                 WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs)
+                   AND f.co_dim_tempo BETWEEN ${start12mInt} AND ${cutoffInt}
+                   AND (
+                     f.ds_filtro_proced_avaliados LIKE '%0202010503%' 
+                     OR f.ds_filtro_proced_solicitados LIKE '%0202010503%'
+                     OR f.ds_filtro_proced_avaliados LIKE '%ABEX008%' 
+                     OR f.ds_filtro_proced_solicitados LIKE '%ABEX008%'
+                     OR f.ds_filtro_proced_avaliados LIKE '%02.02.01.050-3%'
+                     OR f.ds_filtro_proced_solicitados LIKE '%02.02.01.050-3%'
+                   )
+                 LIMIT 1),
+                (SELECT 1 FROM tb_exame_requisitado req 
+                 JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado 
+                 WHERE req.co_prontuario = ANY(tcw.all_co_seq_prontuarios) 
+                 LIMIT 1)
+              ) AS has_hba1c,
               -- Exame do Pé nos últimos 12 meses (B-Tree integer index scan)
               (SELECT 1 FROM tb_fat_proced_atend_proced fpa WHERE fpa.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fpa.co_dim_procedimento = 7478 AND fpa.co_dim_tempo BETWEEN ${start12mInt} AND ${cutoffInt} LIMIT 1) AS has_exame_pes,
 
@@ -2477,7 +2494,24 @@ export class RiskStratificationService {
               (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.nu_pressao_sistolica IS NOT NULL AND f.co_dim_tempo BETWEEN ${prevStart6mInt} AND ${prevCutoffInt} LIMIT 1) AS prev_has_pa_6m,
               (SELECT 1 FROM tb_fat_visita_domiciliar fvd WHERE fvd.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fvd.co_dim_tempo BETWEEN ${prevStart12mInt} AND ${prevCutoffInt} LIMIT 1) AS prev_has_visita_12m,
               (SELECT 1 FROM tb_fat_atendimento_individual f WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND f.nu_peso IS NOT NULL AND f.nu_altura IS NOT NULL AND f.co_dim_tempo BETWEEN ${prevStart12mInt} AND ${prevCutoffInt} LIMIT 1) AS prev_has_peso_altura,
-              (SELECT 1 FROM tb_exame_requisitado req JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado WHERE req.co_prontuario = ANY(tcw.all_co_seq_prontuarios) AND COALESCE(req.dt_realizacao, req.dt_solicitacao) >= ${prevReferenceDate} - INTERVAL '12 months' AND COALESCE(req.dt_realizacao, req.dt_solicitacao) <= ${prevReferenceDate} + INTERVAL '1 day' LIMIT 1) AS prev_has_hba1c,
+              COALESCE(
+                (SELECT 1 FROM tb_fat_atendimento_individual f 
+                 WHERE f.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs)
+                   AND f.co_dim_tempo BETWEEN ${prevStart12mInt} AND ${prevCutoffInt}
+                   AND (
+                     f.ds_filtro_proced_avaliados LIKE '%0202010503%' 
+                     OR f.ds_filtro_proced_solicitados LIKE '%0202010503%'
+                     OR f.ds_filtro_proced_avaliados LIKE '%ABEX008%' 
+                     OR f.ds_filtro_proced_solicitados LIKE '%ABEX008%'
+                     OR f.ds_filtro_proced_avaliados LIKE '%02.02.01.050-3%'
+                     OR f.ds_filtro_proced_solicitados LIKE '%02.02.01.050-3%'
+                   )
+                 LIMIT 1),
+                (SELECT 1 FROM tb_exame_requisitado req 
+                 JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado 
+                 WHERE req.co_prontuario = ANY(tcw.all_co_seq_prontuarios) 
+                 LIMIT 1)
+              ) AS prev_has_hba1c,
               (SELECT 1 FROM tb_fat_proced_atend_proced fpa WHERE fpa.co_fat_cidadao_pec = ANY(tcw.all_co_seq_fat_cidadao_pecs) AND fpa.co_dim_procedimento = 7478 AND fpa.co_dim_tempo BETWEEN ${prevStart12mInt} AND ${prevCutoffInt} LIMIT 1) AS prev_has_exame_pes
             FROM TargetCidadaosWithPECs tcw
             LEFT JOIN LATERAL (
@@ -3015,13 +3049,28 @@ export class RiskStratificationService {
               )
             ) AS dm_visita_12m,
             COUNT(*) FILTER (WHERE COALESCE(csa.st_diabetes, 0) = 1
-              AND EXISTS (
-                SELECT 1 FROM tb_prontuario p
-                JOIN tb_exame_requisitado req ON req.co_prontuario = p.co_seq_prontuario
-                JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado
-                WHERE p.co_cidadao = c.co_seq_cidadao
-                  AND COALESCE(req.dt_realizacao, req.dt_solicitacao) >= ${referenceDate} - INTERVAL '12 months'
-                  AND COALESCE(req.dt_realizacao, req.dt_solicitacao) <= ${referenceDate} + INTERVAL '1 day'
+              AND (
+                EXISTS (
+                  SELECT 1 FROM tb_fat_atendimento_individual f
+                  WHERE f.co_fat_cidadao_pec = ANY(
+                    (SELECT array_agg(fp.co_seq_fat_cidadao_pec) FROM tb_fat_cidadao_pec fp WHERE fp.co_cidadao = c.co_seq_cidadao)
+                  )
+                  AND f.co_dim_tempo BETWEEN ${start12mInt} AND ${cutoffInt}
+                  AND (
+                    f.ds_filtro_proced_avaliados LIKE '%0202010503%' 
+                    OR f.ds_filtro_proced_solicitados LIKE '%0202010503%'
+                    OR f.ds_filtro_proced_avaliados LIKE '%ABEX008%' 
+                    OR f.ds_filtro_proced_solicitados LIKE '%ABEX008%'
+                    OR f.ds_filtro_proced_avaliados LIKE '%02.02.01.050-3%' 
+                    OR f.ds_filtro_proced_solicitados LIKE '%02.02.01.050-3%'
+                  )
+                )
+                OR EXISTS (
+                  SELECT 1 FROM tb_prontuario p
+                  JOIN tb_exame_requisitado req ON req.co_prontuario = p.co_seq_prontuario
+                  JOIN tb_exame_hemoglobina_glicada hem ON hem.co_exame_requisitado = req.co_seq_exame_requisitado
+                  WHERE p.co_cidadao = c.co_seq_cidadao
+                )
               )
             ) AS dm_hba1c,
             COUNT(*) FILTER (WHERE COALESCE(csa.st_diabetes, 0) = 1
